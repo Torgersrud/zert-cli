@@ -106,6 +106,7 @@ func fakeSSH(t *testing.T) string {
 	script := "#!/bin/sh\n" +
 		"printf '%s\\n' \"ARGS $*\" >> \"$FAKE_SSH_LOG\"\n" +
 		"printf '%s\\n' \"TOKEN $ZERT_TUNNEL_TOKEN\" >> \"$FAKE_SSH_LOG\"\n" +
+		"cat > /dev/null\n" +
 		"exit ${FAKE_SSH_EXIT:-0}\n"
 	if err := os.WriteFile(path, []byte(script), 0755); err != nil {
 		t.Fatal(err)

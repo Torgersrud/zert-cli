@@ -30,7 +30,7 @@ Releases (prebuilt binaries for linux/darwin/windows, amd64/arm64) are on the
   `0600` permissions. Keep it private; it grants access to your account for up
   to 30 days.
 - **`ZERT_TUNNEL_TOKEN` in the child environment.** `zert vm` and `zert <path>`
-  spawn `ssh`/`scp` with a `ProxyCommand=zert tunnel <id>` and pass the session
+  spawn `ssh` with a `ProxyCommand=zert tunnel <id>` and pass the session
   token to that child through the `ZERT_TUNNEL_TOKEN` environment variable
   (never on the command line). If your `~/.ssh/config` uses `SendEnv *` or a
   `LocalCommand`, that token could be forwarded or exposed — review those

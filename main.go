@@ -22,7 +22,6 @@ import (
 )
 
 var sshPath = "ssh"
-var scpPath = "scp"
 
 // version is set at build time via -ldflags "-X main.version=...".
 var version = "dev"
@@ -162,9 +161,10 @@ usage:
                                  (creates one if none is running, and
                                  sshs into it after the copy if this
                                  command created it — the vm stays up)
-                                 names may only use letters, digits and
-                                 ._@%+=:,- — rename or archive the rest
-                                 symlinks inside a dir are followed by scp -r
+                                  names may only use letters, digits and
+                                  ._@%+=:,- — rename or archive the rest
+                                  the copy is streamed as one compressed
+                                  tar; symlinks are followed
 
 host: --host flag > $ZERT_HOST > stored credentials
       (tunnel: $ZERT_HOST must match your logged-in host unless

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"errors"
 	"fmt"
 	"io"
@@ -11,19 +13,14 @@ import (
 	"strings"
 )
 
-// scpRemoteBase allows only characters that are safe in a legacy scp remote
-// path: letters, digits and . _ @ % + = : , - (colon is not a shell
-// metacharacter, spaces and metacharacters like ; & | $ ` are rejected).
-var scpRemoteBase = regexp.MustCompile(`^[A-Za-z0-9._@%+=:,-]+$`)
+// remoteBaseName allows only characters that are safe as a remote file name
+// and in CLI output: letters, digits and . _ @ % + = : , - (spaces and shell
+// metacharacters like ; & | $ ` are rejected).
+var remoteBaseName = regexp.MustCompile(`^[A-Za-z0-9._@%+=:,-]+$`)
 
-// safeScpSource prefixes relative paths so a leading dash can't be read
-// as an scp option.
-func safeScpSource(p string) string {
-	if filepath.IsAbs(p) || strings.HasPrefix(p, "./") || strings.HasPrefix(p, "../") {
-		return p
-	}
-	return "./" + p
-}
+// uploadRemoteCmd is the remote command every upload streams into: the local
+// side sends a gzip-compressed tar on stdin and the vm untars it into $HOME.
+const uploadRemoteCmd = "tar -xzf - -C ~"
 
 // expandTilde resolves a leading ~ against the user's home directory.
 func expandTilde(arg string) string {
@@ -75,11 +72,133 @@ func pickLiveVM(rows []vmRow) *vmRow {
 	return nil
 }
 
-// uploadRun is cmdUpload with injectable stdio and scp binary (for tests).
+type countWriter struct {
+	w io.Writer
+	n int64
+}
+
+func (c *countWriter) Write(p []byte) (int, error) {
+	n, err := c.w.Write(p)
+	c.n += int64(n)
+	return n, err
+}
+
+// packTar streams src (file or dir) as a gzip-compressed tar rooted at base
+// into w, and returns the raw and compressed byte counts. Symlinks are
+// dereferenced (like scp -r did); broken symlinks and non-regular,
+// non-directory files are skipped.
+func packTar(w io.Writer, src, base string) (int64, int64, error) {
+	cw := &countWriter{w: w}
+	zw, err := gzip.NewWriterLevel(cw, gzip.BestSpeed)
+	if err != nil {
+		return 0, 0, err
+	}
+	tw := tar.NewWriter(zw)
+	var raw int64
+	fi, err := os.Stat(src)
+	if err != nil {
+		return 0, 0, err
+	}
+	if fi.IsDir() {
+		err = addTree(tw, src, base, fi, &raw)
+	} else {
+		err = addFile(tw, src, base, fi, &raw)
+	}
+	if err == nil {
+		if cerr := tw.Close(); cerr != nil {
+			err = cerr
+		} else if cerr := zw.Close(); cerr != nil {
+			err = cerr
+		}
+	}
+	return raw, cw.n, err
+}
+
+// addTree writes dir (as an entry plus contents) recursively. name uses
+// forward slashes and is the tar entry prefix for dir.
+func addTree(tw *tar.Writer, dir, name string, fi os.FileInfo, raw *int64) error {
+	hdr, err := tar.FileInfoHeader(fi, "")
+	if err != nil {
+		return err
+	}
+	hdr.Name = name + "/"
+	if err := tw.WriteHeader(hdr); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		p := filepath.Join(dir, e.Name())
+		st, err := os.Stat(p)
+		if err != nil {
+			continue // broken symlink or vanished file
+		}
+		en := name + "/" + e.Name()
+		switch {
+		case st.IsDir():
+			if err := addTree(tw, p, en, st, raw); err != nil {
+				return err
+			}
+		case st.Mode().IsRegular():
+			if err := addFile(tw, p, en, st, raw); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// addFile writes one regular file as tar entry name.
+func addFile(tw *tar.Writer, path, name string, fi os.FileInfo, raw *int64) error {
+	if !fi.Mode().IsRegular() {
+		return nil
+	}
+	hdr, err := tar.FileInfoHeader(fi, "")
+	if err != nil {
+		return err
+	}
+	hdr.Name = name
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if err := tw.WriteHeader(hdr); err != nil {
+		return err
+	}
+	n, err := io.Copy(tw, f)
+	*raw += n
+	return err
+}
+
+func humanBytes(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	v, i := float64(n), 0
+	for un := []string{"KiB", "MiB", "GiB", "TiB"}; ; i++ {
+		v /= unit
+		if v < unit || i == len(un)-1 {
+			return fmt.Sprintf("%.1f %s", v, un[i])
+		}
+	}
+}
+
+// uploadRun is cmdUpload with injectable stdio (for tests). The source is
+// streamed as a tar.gz through a single ssh exec (`tar -xzf - -C ~`), which
+// avoids scp's per-file round trips and compresses the whole tree as one
+// stream (compression happens client-side, before the encrypted tunnel).
 func uploadRun(arg string, stdin io.Reader, stdout, stderr io.Writer) error {
 	src := expandTilde(arg)
-	base := filepath.Base(strings.TrimRight(src, "/"))
-	if !scpRemoteBase.MatchString(base) {
+	trimmed := strings.TrimRight(src, "/")
+	base := filepath.Base(trimmed)
+	if trimmed != "" && (base == "." || base == "..") {
+		return errors.New(`refusing to upload "." or ".." — pass a specific file or directory`)
+	}
+	if !remoteBaseName.MatchString(base) {
 		return errors.New("file name \"" + base + "\" contains characters that cannot be uploaded safely; rename the file or archive it first (letters, digits and . _ @ % + = : , - only)")
 	}
 
@@ -97,18 +216,25 @@ func uploadRun(arg string, stdin io.Reader, stdout, stderr io.Writer) error {
 	}
 
 	creds, a := requireLogin()
-	me, err := getMe(a)
+	// run the two independent profile/vm lookups concurrently
+	var me *meInfo
+	meCh := make(chan error, 1)
+	go func() {
+		var err error
+		me, err = getMe(a)
+		meCh <- err
+	}()
+	rows, err := listVMs(a)
+	if meErr := <-meCh; meErr != nil {
+		return meErr // 401 -> "session expired — run `zert login`"
+	}
 	if err != nil {
-		return err // 401 -> "session expired — run `zert login`"
+		return err
 	}
 	if err := ensurePubkey(a, me, stderr); err != nil {
 		return err
 	}
 
-	rows, err := listVMs(a)
-	if err != nil {
-		return err
-	}
 	vm := pickLiveVM(rows)
 	created := false
 	if vm == nil {
@@ -120,24 +246,21 @@ func uploadRun(arg string, stdin io.Reader, stdout, stderr io.Writer) error {
 		created = true
 	}
 
-	dest := "user@" + vm.SandboxID + ":~/" + base
-	safeSrc := safeScpSource(src)
-
+	dest := "user@" + vm.SandboxID
 	self, err := os.Executable()
 	if err != nil {
 		self = "zert"
 	}
-	scpCmd := exec.Command(scpPath)
-	scpCmd.Args = append(scpCmd.Args,
-		"-r",
+	sshCmd := exec.Command(sshPath)
+	sshCmd.Args = append(sshCmd.Args,
 		"-o", proxyCommand(self, vm.SandboxID),
 		"-o", "StrictHostKeyChecking=accept-new",
-		"--",
-		safeSrc, dest,
+		dest,
+		uploadRemoteCmd,
 	)
-	scpCmd.Stdout, scpCmd.Stderr = stdout, stderr
+	sshCmd.Stdout, sshCmd.Stderr = stdout, stderr
 	// the tunnel child gets the token via environment, never argv
-	scpCmd.Env = childEnv(os.Environ(), creds.Token, creds.Host)
+	sshCmd.Env = childEnv(os.Environ(), creds.Token, creds.Host)
 
 	kind := "path"
 	if st, err := os.Stat(src); err == nil {
@@ -147,14 +270,36 @@ func uploadRun(arg string, stdin io.Reader, stdout, stderr io.Writer) error {
 			kind = "file"
 		}
 	}
-	fmt.Fprintf(stderr, "uploading %s (%s) → %s\n", abs, kind, dest)
-	if err := scpCmd.Run(); err != nil {
-		var ee *exec.ExitError
-		if errors.As(err, &ee) {
-			return &exitError{ee.ExitCode(), fmt.Errorf("scp exited with %d", ee.ExitCode())}
-		}
-		return fmt.Errorf("spawn scp: %w", err)
+	fmt.Fprintf(stderr, "uploading %s (%s) → %s:~/%s\n", abs, kind, dest, base)
+
+	pr, pw := io.Pipe()
+	sshCmd.Stdin = pr
+	if err := sshCmd.Start(); err != nil {
+		pw.Close()
+		return fmt.Errorf("spawn ssh: %w", err)
 	}
+	packDone := make(chan error, 1)
+	var raw, packed int64
+	go func() {
+		r, p, err := packTar(pw, src, base)
+		raw, packed = r, p
+		pw.CloseWithError(err)
+		packDone <- err
+	}()
+	waitErr := sshCmd.Wait()
+	packErr := <-packDone
+	if waitErr != nil {
+		var ee *exec.ExitError
+		if errors.As(waitErr, &ee) {
+			return &exitError{ee.ExitCode(), fmt.Errorf("ssh exited with %d", ee.ExitCode())}
+		}
+		return fmt.Errorf("run ssh: %w", waitErr)
+	}
+	// a broken pipe with a clean ssh exit just means ssh closed stdin early
+	if packErr != nil && !errors.Is(packErr, io.ErrClosedPipe) {
+		return fmt.Errorf("packing %s: %w", abs, packErr)
+	}
+	fmt.Fprintf(stderr, "uploaded %s (%s → %s compressed)\n", abs, humanBytes(raw), humanBytes(packed))
 
 	if created {
 		fmt.Fprintf(stderr, "entering vm %s (vm stays up after exit) …\n", vm.SandboxID)

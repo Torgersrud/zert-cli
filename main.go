@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -74,6 +75,12 @@ func (a api) do(method, path string, body any) (*http.Response, []byte, error) {
 	defer resp.Body.Close()
 	data, err := io.ReadAll(resp.Body)
 	return resp, data, err
+}
+
+// vmPath builds the /v1/vm/{id} path, escaping the id as a single path
+// segment (defense in depth on top of validSandboxID).
+func vmPath(id string) string {
+	return "/v1/vm/" + url.PathEscape(id)
 }
 
 // detail extracts FastAPI's {"detail": "..."} message.
@@ -358,7 +365,7 @@ func cmdKill(args []string) error {
 		return errors.New("invalid vm id")
 	}
 	_, a := requireLogin()
-	resp, data, err := a.do("DELETE", "/v1/vm/"+args[0], nil)
+	resp, data, err := a.do("DELETE", vmPath(args[0]), nil)
 	if err != nil {
 		return err
 	}
@@ -525,7 +532,7 @@ func vmRun(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 
 	if !keep {
 		fmt.Fprintln(stderr, "killing vm "+vm.SandboxID+" …")
-		resp, data, err := a.do("DELETE", "/v1/vm/"+vm.SandboxID, nil)
+		resp, data, err := a.do("DELETE", vmPath(vm.SandboxID), nil)
 		if err != nil || resp.StatusCode != http.StatusOK {
 			fmt.Fprintf(stderr, "zert: kill failed: %v %s\n", err, detail(data))
 		}

@@ -72,7 +72,12 @@ func saveCredentials(c *Credentials) error {
 	if c.Insecure {
 		body += "insecure = true\n"
 	}
-	return os.WriteFile(path, []byte(body), 0600)
+	if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+		return err
+	}
+	// WriteFile only sets the mode on create; chmod tightens a pre-existing
+	// file that may have looser permissions.
+	return os.Chmod(path, 0600)
 }
 
 func deleteCredentials() error {

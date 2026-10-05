@@ -44,6 +44,10 @@ func newFlagSet(name string) *flag.FlagSet {
 	return fs
 }
 
+// httpClient is the shared client for API calls. The websocket tunnel does NOT
+// use it (long-lived stream), so only request/response calls get a timeout.
+var httpClient = &http.Client{Timeout: 30 * time.Second}
+
 type api struct {
 	host  string
 	token string
@@ -68,7 +72,7 @@ func (a api) do(method, path string, body any) (*http.Response, []byte, error) {
 	if a.token != "" {
 		req.Header.Set("authorization", "Bearer "+a.token)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -387,6 +391,17 @@ func ensurePubkey(a api, me *meInfo, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
+	fields := strings.Fields(pub)
+	if len(fields) == 0 {
+		return errors.New("ssh public key file is empty")
+	}
+	switch {
+	case strings.HasPrefix(fields[0], "ssh-"),
+		strings.HasPrefix(fields[0], "ecdsa-"),
+		strings.HasPrefix(fields[0], "sk-"):
+	default:
+		return errors.New("not an ssh public key: " + fields[0])
+	}
 	resp, data, err := a.do("POST", "/v1/me/key", map[string]string{"pubkey": pub})
 	if err != nil {
 		return err
@@ -394,7 +409,7 @@ func ensurePubkey(a api, me *meInfo, stderr io.Writer) error {
 	if resp.StatusCode != http.StatusOK {
 		return mapped(resp, data)
 	}
-	fmt.Fprintln(stderr, "uploaded ssh pubkey ("+strings.Fields(pub)[0]+" …)")
+	fmt.Fprintln(stderr, "uploaded ssh pubkey ("+fields[0]+" …)")
 	return nil
 }
 
@@ -418,7 +433,9 @@ func createVM(a api) (*vmRow, error) {
 		return nil, err
 	}
 	if resp.StatusCode == http.StatusBadGateway {
-		// one automatic retry per phase2.md
+		// one automatic retry per phase2.md. NOTE: POST /v1/vm is NOT
+		// idempotent, so a 502 that actually reached the backend could create
+		// a duplicate VM; requires a server-side idempotency key to fix.
 		resp, data, err = a.do("POST", "/v1/vm", map[string]any{})
 		if err != nil {
 			return nil, err

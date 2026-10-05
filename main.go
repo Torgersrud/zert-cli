@@ -146,6 +146,8 @@ usage:
   zert kill <id>                 terminate a VM
   zert <path>                    copy a local dir/file into your vm
                                  (creates one if none is running)
+                                 names may only use letters, digits and
+                                 ._@%+=:,- — rename or archive the rest
 
 host: --host flag > $ZERT_HOST > stored credentials
 `)

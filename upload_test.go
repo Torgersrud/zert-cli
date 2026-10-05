@@ -3,9 +3,11 @@ package main
 import (
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -145,5 +147,107 @@ func TestLooksLikePath(t *testing.T) {
 		if looksLikePath(no) {
 			t.Fatalf("%s should not look like a path", no)
 		}
+	}
+}
+
+func TestUploadDoubleDash(t *testing.T) {
+	fs := newFakeServer(t)
+	setupHome(t, fs.URL)
+	logPath := fakeSCP(t)
+	dir := tempDirNamed(t, "mydir")
+
+	if err := uploadRun(dir, os.Stdout, os.Stderr); err != nil {
+		t.Fatal(err)
+	}
+	logged := readLog(t, logPath)
+	if !strings.Contains(logged, "-- "+dir+" user@vm123:~/mydir") {
+		t.Fatalf("-- must immediately precede source: %s", logged)
+	}
+}
+
+func TestUploadRelativeDashPrefixed(t *testing.T) {
+	cases := map[string]string{
+		"-oProxyCommand=x": "./-oProxyCommand=x",
+		"a:b":              "./a:b",
+		"./keep":           "./keep",
+		"../up":            "../up",
+	}
+	for in, want := range cases {
+		if got := safeScpSource(in); got != want {
+			t.Fatalf("safeScpSource(%q) = %q, want %q", in, got, want)
+		}
+	}
+	abs := filepath.Join(t.TempDir(), "x")
+	if got := safeScpSource(abs); got != abs {
+		t.Fatalf("absolute path must be unchanged, got %q", got)
+	}
+}
+
+func TestUploadDashFileArrivesPrefixed(t *testing.T) {
+	fs := newFakeServer(t)
+	setupHome(t, fs.URL)
+	logPath := fakeSCP(t)
+
+	if err := uploadRun("-oProxyCommand=x", os.Stdout, os.Stderr); err != nil {
+		t.Fatal(err)
+	}
+	logged := readLog(t, logPath)
+	if !strings.Contains(logged, "-- ./-oProxyCommand=x") {
+		t.Fatalf("dash-prefixed name not neutralized: %s", logged)
+	}
+}
+
+func TestUploadColonFileArrivesPrefixed(t *testing.T) {
+	fs := newFakeServer(t)
+	setupHome(t, fs.URL)
+	logPath := fakeSCP(t)
+
+	if err := uploadRun("a:b", os.Stdout, os.Stderr); err != nil {
+		t.Fatal(err)
+	}
+	logged := readLog(t, logPath)
+	if !strings.Contains(logged, "-- ./a:b") {
+		t.Fatalf("colon name must arrive prefixed: %s", logged)
+	}
+}
+
+func TestUploadMetacharNameRefused(t *testing.T) {
+	fs := newFakeServer(t)
+	setupHome(t, fs.URL)
+	logPath := fakeSCP(t)
+
+	err := uploadRun("a;b", os.Stdout, os.Stderr)
+	if err == nil {
+		t.Fatal("expected error for shell metacharacter in name")
+	}
+	if !strings.Contains(err.Error(), "rename") || !strings.Contains(err.Error(), "archive") {
+		t.Fatalf("error should mention rename/archive, got: %v", err)
+	}
+	if _, statErr := os.Stat(logPath); statErr == nil {
+		t.Fatal("scp spawned despite bad file name")
+	}
+	fs.mu.Lock()
+	deleted := fs.deleted
+	fs.mu.Unlock()
+	if len(deleted) != 0 {
+		t.Fatalf("no vm operations expected, got deletes %v", deleted)
+	}
+}
+
+func TestUploadBadNameNoNetwork(t *testing.T) {
+	var hits int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		http.Error(w, `{}`, http.StatusInternalServerError)
+	}))
+	defer ts.Close()
+	setupHome(t, ts.URL)
+	fakeSCP(t)
+
+	if err := uploadRun("a;b", os.Stdout, os.Stderr); err == nil {
+		t.Fatal("expected error for bad file name")
+	}
+	if n := atomic.LoadInt32(&hits); n != 0 {
+		t.Fatalf("bad name hit the network %d times", n)
 	}
 }

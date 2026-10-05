@@ -7,8 +7,23 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
+
+// scpRemoteBase allows only characters that are safe in a legacy scp remote
+// path: letters, digits and . _ @ % + = : , - (colon is not a shell
+// metacharacter, spaces and metacharacters like ; & | $ ` are rejected).
+var scpRemoteBase = regexp.MustCompile(`^[A-Za-z0-9._@%+=:,-]+$`)
+
+// safeScpSource prefixes relative paths so a leading dash can't be read
+// as an scp option.
+func safeScpSource(p string) string {
+	if filepath.IsAbs(p) || strings.HasPrefix(p, "./") || strings.HasPrefix(p, "../") {
+		return p
+	}
+	return "./" + p
+}
 
 // expandTilde resolves a leading ~ against the user's home directory.
 func expandTilde(arg string) string {
@@ -41,6 +56,12 @@ func pickLiveVM(rows []vmRow) *vmRow {
 
 // uploadRun is cmdUpload with injectable stdio and scp binary (for tests).
 func uploadRun(arg string, stdout, stderr io.Writer) error {
+	src := expandTilde(arg)
+	base := filepath.Base(strings.TrimRight(src, "/"))
+	if !scpRemoteBase.MatchString(base) {
+		return errors.New("file name \"" + base + "\" contains characters that cannot be uploaded safely; rename the file or archive it first (letters, digits and . _ @ % + = : , - only)")
+	}
+
 	creds, a := requireLogin()
 	me, err := getMe(a)
 	if err != nil {
@@ -63,8 +84,8 @@ func uploadRun(arg string, stdout, stderr io.Writer) error {
 		}
 	}
 
-	src := expandTilde(arg)
-	dest := "user@" + vm.SandboxID + ":~/" + filepath.Base(strings.TrimRight(src, "/"))
+	dest := "user@" + vm.SandboxID + ":~/" + base
+	safeSrc := safeScpSource(src)
 
 	self, err := os.Executable()
 	if err != nil {
@@ -75,7 +96,8 @@ func uploadRun(arg string, stdout, stderr io.Writer) error {
 		"-r",
 		"-o", proxyCommand(self, vm.SandboxID),
 		"-o", "StrictHostKeyChecking=accept-new",
-		src, dest,
+		"--",
+		safeSrc, dest,
 	)
 	scpCmd.Stdout, scpCmd.Stderr = stdout, stderr
 	// the tunnel child gets the token via environment, never argv

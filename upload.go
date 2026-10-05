@@ -44,6 +44,27 @@ func looksLikePath(arg string) bool {
 	return err == nil
 }
 
+// refuseUnsafe rejects uploading the filesystem root or the user's home dir.
+// resolved must be the EvalSymlinks+Abs-resolved source path.
+func refuseUnsafe(resolved string) error {
+	if filepath.Dir(resolved) == resolved {
+		return errors.New("refusing to upload the filesystem root")
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		h := home
+		if ha, e := filepath.Abs(home); e == nil {
+			h = ha
+			if hs, e := filepath.EvalSymlinks(ha); e == nil {
+				h = hs
+			}
+		}
+		if resolved == h {
+			return errors.New("refusing to upload your home directory")
+		}
+	}
+	return nil
+}
+
 // pickLiveVM returns the first live row, or nil.
 func pickLiveVM(rows []vmRow) *vmRow {
 	for i := range rows {
@@ -60,6 +81,19 @@ func uploadRun(arg string, stdout, stderr io.Writer) error {
 	base := filepath.Base(strings.TrimRight(src, "/"))
 	if !scpRemoteBase.MatchString(base) {
 		return errors.New("file name \"" + base + "\" contains characters that cannot be uploaded safely; rename the file or archive it first (letters, digits and . _ @ % + = : , - only)")
+	}
+
+	abs, err := filepath.Abs(src)
+	if err != nil {
+		return err
+	}
+	// best effort: EvalSymlinks fails for paths that don't exist, which is fine
+	resolved := abs
+	if r, e := filepath.EvalSymlinks(abs); e == nil {
+		resolved = r
+	}
+	if err := refuseUnsafe(resolved); err != nil {
+		return err
 	}
 
 	creds, a := requireLogin()
@@ -103,7 +137,15 @@ func uploadRun(arg string, stdout, stderr io.Writer) error {
 	// the tunnel child gets the token via environment, never argv
 	scpCmd.Env = childEnv(os.Environ(), creds.Token, creds.Host)
 
-	fmt.Fprintf(stderr, "uploading %s → %s …\n", arg, dest)
+	kind := "path"
+	if st, err := os.Stat(src); err == nil {
+		if st.IsDir() {
+			kind = "dir"
+		} else {
+			kind = "file"
+		}
+	}
+	fmt.Fprintf(stderr, "uploading %s (%s) → %s\n", abs, kind, dest)
 	if err := scpCmd.Run(); err != nil {
 		var ee *exec.ExitError
 		if errors.As(err, &ee) {

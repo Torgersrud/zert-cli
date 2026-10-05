@@ -251,3 +251,56 @@ func TestUploadBadNameNoNetwork(t *testing.T) {
 		t.Fatalf("bad name hit the network %d times", n)
 	}
 }
+
+func TestUploadRefusesRoot(t *testing.T) {
+	fs := newFakeServer(t)
+	setupHome(t, fs.URL)
+	logPath := fakeSCP(t)
+	fs.create = func(w http.ResponseWriter, _ int) {
+		t.Error("unexpected POST /v1/vm for refused path")
+		http.Error(w, `{"detail":"no"}`, 500)
+	}
+
+	err := uploadRun("/", os.Stdout, os.Stderr)
+	if err == nil || !strings.Contains(err.Error(), "root") {
+		t.Fatalf("expected root refusal, got %v", err)
+	}
+	if _, statErr := os.Stat(logPath); statErr == nil {
+		t.Fatal("scp spawned despite root upload")
+	}
+	fs.mu.Lock()
+	deleted := fs.deleted
+	fs.mu.Unlock()
+	if len(deleted) != 0 {
+		t.Fatalf("no vm operations expected, got deletes %v", deleted)
+	}
+}
+
+func TestUploadRefusesHome(t *testing.T) {
+	fs := newFakeServer(t)
+	home := setupHome(t, fs.URL)
+	logPath := fakeSCP(t)
+
+	err := uploadRun(home, os.Stdout, os.Stderr)
+	if err == nil || !strings.Contains(err.Error(), "home directory") {
+		t.Fatalf("expected home refusal, got %v", err)
+	}
+	if _, statErr := os.Stat(logPath); statErr == nil {
+		t.Fatal("scp spawned despite home upload")
+	}
+}
+
+func TestUploadTempDirPassesThrough(t *testing.T) {
+	fs := newFakeServer(t)
+	setupHome(t, fs.URL)
+	logPath := fakeSCP(t)
+	dir := tempDirNamed(t, "sub")
+
+	if err := uploadRun(dir, os.Stdout, os.Stderr); err != nil {
+		t.Fatal(err)
+	}
+	logged := readLog(t, logPath)
+	if !strings.Contains(logged, "-- ") || !strings.Contains(logged, "user@vm123:~/sub") {
+		t.Fatalf("temp dir not passed through to scp: %s", logged)
+	}
+}

@@ -155,6 +155,7 @@ usage:
                                  (creates one if none is running)
                                  names may only use letters, digits and
                                  ._@%+=:,- — rename or archive the rest
+                                 symlinks inside a dir are followed by scp -r
 
 host: --host flag > $ZERT_HOST > stored credentials
       (tunnel: $ZERT_HOST must match your logged-in host unless

@@ -1,0 +1,49 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        run: ./build.sh
+        env:
+          VERSION: ${{ github.ref_name }}
+
+      - name: Package tarballs
+        run: |
+          set -euo pipefail
+          cd dist
+          for f in zert-*; do
+            case "$f" in *.tar.gz|SHA256SUMS) continue ;; esac
+            case "$f" in
+              *.exe) bin="zert.exe" ;;
+              *) bin="zert" ;;
+            esac
+            dir=$(mktemp -d)
+            install -m 0755 "$f" "$dir/$bin"
+            tar -C "$dir" -czf "${f%.exe}.tar.gz" "$bin"
+            rm -rf "$dir"
+          done
+          find . -maxdepth 1 -name 'zert-*' ! -name '*.tar.gz' -delete
+          sha256sum -- *.tar.gz > SHA256SUMS
+
+      - name: Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" dist/*.tar.gz dist/SHA256SUMS \
+            --title "zert $TAG" --generate-notes

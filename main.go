@@ -24,6 +24,9 @@ import (
 var sshPath = "ssh"
 var scpPath = "scp"
 
+// version is set at build time via -ldflags "-X main.version=...".
+var version = "dev"
+
 type exitError struct {
 	code int
 	err  error
@@ -590,6 +593,8 @@ func main() {
 		err = cmdTunnel(os.Args[2:])
 	case "help", "-h", "--help":
 		usage()
+	case "version", "-version", "--version":
+		fmt.Println(version)
 	default:
 		if !looksLikePath(cmd) {
 			fmt.Fprintf(os.Stderr, "zert: unknown command %q\n\n", cmd)

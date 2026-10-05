@@ -14,7 +14,7 @@ for goos in linux darwin windows; do
     [ "$goos" = windows ] && ext=".exe"
     name="zert-$VERSION-$goos-$goarch$ext"
     CGO_ENABLED=0 GOOS=$goos GOARCH=$goarch \
-      go build -trimpath -ldflags="-s -w" -o "$OUT/$name" .
+      go build -trimpath -ldflags="-s -w -X main.version=$VERSION" -o "$OUT/$name" .
     echo "built $OUT/$name"
   done
 done

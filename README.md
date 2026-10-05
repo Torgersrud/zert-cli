@@ -2,6 +2,23 @@
 
 Customer CLI for the zert sandbox service.
 
+## Install
+
+```sh
+brew tap Torgersrud/zert
+brew install zert
+```
+
+Or build from source:
+
+```sh
+go install .   # or ./build.sh for cross-compiled dist/ binaries
+```
+
+Releases (prebuilt binaries for linux/darwin/windows, amd64/arm64) are on the
+[releases page](https://github.com/Torgersrud/zert-cli/releases); tagging
+`vX.Y.Z` builds and publishes them automatically.
+
 ## Security notes
 
 - **HTTPS required.** The API host must use `https://`. Plain `http://` is

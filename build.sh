@@ -18,3 +18,13 @@ for goos in linux darwin windows; do
     echo "built $OUT/$name"
   done
 done
+
+if command -v sha256sum >/dev/null 2>&1; then
+  (cd "$OUT" && sha256sum -- * > SHA256SUMS)
+elif command -v shasum >/dev/null 2>&1; then
+  (cd "$OUT" && shasum -a 256 -- * > SHA256SUMS)
+else
+  echo "no sha256 tool found; skipping SHA256SUMS" >&2
+  exit 1
+fi
+echo "wrote $OUT/SHA256SUMS"

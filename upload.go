@@ -101,7 +101,7 @@ func uploadRun(arg string, stdout, stderr io.Writer) error {
 	)
 	scpCmd.Stdout, scpCmd.Stderr = stdout, stderr
 	// the tunnel child gets the token via environment, never argv
-	scpCmd.Env = append(os.Environ(), "ZERT_TUNNEL_TOKEN="+creds.Token)
+	scpCmd.Env = childEnv(os.Environ(), creds.Token, creds.Host)
 
 	fmt.Fprintf(stderr, "uploading %s → %s …\n", arg, dest)
 	if err := scpCmd.Run(); err != nil {

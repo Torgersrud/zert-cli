@@ -150,6 +150,8 @@ usage:
                                  ._@%+=:,- — rename or archive the rest
 
 host: --host flag > $ZERT_HOST > stored credentials
+      (tunnel: $ZERT_HOST must match your logged-in host unless
+       $ZERT_TUNNEL_TOKEN is also set)
 `)
 }
 
@@ -423,6 +425,19 @@ func createVM(a api) (*vmRow, error) {
 	return &vmRow{SandboxID: out.SandboxID, ExpiresAt: out.ExpiresAt, Live: true}, nil
 }
 
+// childEnv returns base with exactly one ZERT_TUNNEL_TOKEN and one ZERT_HOST,
+// set to token/host. Any pre-existing values are removed first (last wins).
+func childEnv(base []string, token, host string) []string {
+	out := make([]string, 0, len(base)+2)
+	for _, kv := range base {
+		if strings.HasPrefix(kv, "ZERT_TUNNEL_TOKEN=") || strings.HasPrefix(kv, "ZERT_HOST=") {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return append(out, "ZERT_TUNNEL_TOKEN="+token, "ZERT_HOST="+host)
+}
+
 // vmRun is cmdVM with injectable stdio and ssh binary (for kill-on-exit tests).
 func vmRun(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	keep := false
@@ -473,7 +488,7 @@ func vmRun(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	sshCmd.Args = append(sshCmd.Args, "user@"+vm.SandboxID)
 	sshCmd.Stdin, sshCmd.Stdout, sshCmd.Stderr = stdin, stdout, stderr
 	// the tunnel child gets the token via environment, never argv
-	sshCmd.Env = append(os.Environ(), "ZERT_TUNNEL_TOKEN="+creds.Token)
+	sshCmd.Env = childEnv(os.Environ(), creds.Token, creds.Host)
 
 	sigc := make(chan os.Signal, 2)
 	signal.Notify(sigc, syscall.SIGINT, syscall.SIGTERM)

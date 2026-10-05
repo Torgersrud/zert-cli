@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 
 	"github.com/coder/websocket"
 )
@@ -120,28 +121,63 @@ func cmdTunnel(args []string) error {
 	if !validSandboxID(id) {
 		return errors.New("invalid vm id")
 	}
-	token := os.Getenv("ZERT_TUNNEL_TOKEN")
-	host := os.Getenv("ZERT_HOST")
-	insecure := false
-	if token == "" || host == "" {
-		c, err := loadCredentials()
-		if err != nil {
-			return errors.New("run `zert login` first")
-		}
-		if token == "" {
-			token = c.Token
-		}
-		if host == "" {
-			host = c.Host
-			insecure = c.Insecure
-		}
-	}
-	if !insecure {
-		normalized, err := checkHost(host)
-		if err != nil {
-			return err
-		}
-		host = normalized
+	host, token, err := resolveTunnelTarget()
+	if err != nil {
+		return err
 	}
 	return tunnelRun(context.Background(), host, id, token, os.Stdin, os.Stdout)
+}
+
+// resolveTunnelTarget decides which host and token the tunnel connects to.
+// A stored token is never sent to a host other than the one that issued it.
+func resolveTunnelTarget() (host, token string, err error) {
+	envToken := os.Getenv("ZERT_TUNNEL_TOKEN")
+	envHost := os.Getenv("ZERT_HOST")
+
+	// Both supplied via env: allowed; no stored token is involved.
+	if envToken != "" && envHost != "" {
+		h, e := checkHost(envHost)
+		if e != nil {
+			return "", "", e
+		}
+		return h, envToken, nil
+	}
+
+	c, e := loadCredentials()
+	if e != nil {
+		return "", "", errors.New("run `zert login` first")
+	}
+	token = envToken
+	if token == "" {
+		token = c.Token // stored token
+	}
+
+	if envHost != "" {
+		stored, e1 := checkHostAllowInsecure(c.Host, c.Insecure)
+		if e1 != nil {
+			return "", "", e1
+		}
+		envNorm, e2 := checkHostAllowInsecure(envHost, c.Insecure)
+		if e2 != nil {
+			return "", "", e2
+		}
+		if strings.EqualFold(envNorm, stored) {
+			return envNorm, token, nil
+		}
+		// Host mismatch: only tolerated when the token itself came from env.
+		if envToken != "" {
+			return envNorm, token, nil
+		}
+		return "", "", errors.New("ZERT_HOST differs from the host you logged in to; run `zert login`")
+	}
+
+	// host comes from stored credentials
+	if !c.Insecure {
+		h, e1 := checkHost(c.Host)
+		if e1 != nil {
+			return "", "", e1
+		}
+		return h, token, nil
+	}
+	return c.Host, token, nil
 }

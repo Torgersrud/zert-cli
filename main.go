@@ -81,11 +81,11 @@ func detail(data []byte) string {
 	var m map[string]any
 	if json.Unmarshal(data, &m) == nil {
 		if d, ok := m["detail"].(string); ok && d != "" {
-			return d
+			return sanitize(d)
 		}
 	}
 	if s := strings.TrimSpace(string(data)); s != "" {
-		return s
+		return sanitize(s)
 	}
 	return "unexpected server response"
 }
@@ -96,7 +96,7 @@ func mapped(resp *http.Response, data []byte) error {
 	case http.StatusUnauthorized:
 		return &apiError{resp.StatusCode, "session expired — run `zert login`"}
 	case http.StatusTooManyRequests:
-		ra := resp.Header.Get("retry-after")
+		ra := sanitize(resp.Header.Get("retry-after"))
 		if ra == "" {
 			ra = "later"
 		}
@@ -287,9 +287,9 @@ func cmdMe([]string) error {
 	}
 	pub := "none"
 	if me.SSHPubkey != nil && *me.SSHPubkey != "" {
-		pub = *me.SSHPubkey
+		pub = sanitize(*me.SSHPubkey)
 	}
-	fmt.Printf("email:  %s\nquota:  %d\npubkey: %s\n", me.Email, me.Quota, pub)
+	fmt.Printf("email:  %s\nquota:  %d\npubkey: %s\n", sanitize(me.Email), me.Quota, pub)
 	return nil
 }
 

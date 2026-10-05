@@ -47,3 +47,15 @@ jobs:
         run: |
           gh release create "$TAG" dist/*.tar.gz dist/SHA256SUMS \
             --title "zert $TAG" --generate-notes
+
+      - name: Bump homebrew tap
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if [ -z "$TAP_TOKEN" ]; then
+            echo "::notice::HOMEBREW_TAP_TOKEN secret not set - skipping tap bump; run scripts/bump-homebrew.sh $TAG manually"
+            exit 0
+          fi
+          git clone --depth 1 "https://x-access-token:${TAP_TOKEN}@github.com/Torgersrud/homebrew-zert.git" /tmp/homebrew-zert
+          ./scripts/bump-homebrew.sh "$TAG" /tmp/homebrew-zert

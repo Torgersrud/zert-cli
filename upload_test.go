@@ -119,8 +119,8 @@ func TestUploadCreatesVMWhenNoneLive(t *testing.T) {
 	fs.mu.Lock()
 	deleted := fs.deleted
 	fs.mu.Unlock()
-	if len(deleted) != 0 {
-		t.Fatalf("upload must not kill the vm, got %v", deleted)
+	if len(deleted) != 1 || deleted[0] != "vm123" {
+		t.Fatalf("created vm must be killed on exit, got deletes %v", deleted)
 	}
 }
 
@@ -150,8 +150,8 @@ func TestUploadCreatedVmAutoSshes(t *testing.T) {
 	fs.mu.Lock()
 	deleted := fs.deleted
 	fs.mu.Unlock()
-	if len(deleted) != 0 {
-		t.Fatalf("vm must stay up after auto-ssh exit, got deletes %v", deleted)
+	if len(deleted) != 1 || deleted[0] != "vm123" {
+		t.Fatalf("created vm must be killed after auto-ssh exit, got deletes %v", deleted)
 	}
 }
 

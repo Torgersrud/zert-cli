@@ -307,8 +307,8 @@ func uploadRun(arg string, stdin io.Reader, stdout, stderr io.Writer) error {
 	fmt.Fprintf(stderr, "uploaded %s (%s → %s compressed)\n", abs, humanBytes(raw), humanBytes(packed))
 
 	if created {
-		fmt.Fprintf(stderr, "entering vm %s (vm stays up after exit) …\n", vm.SandboxID)
-		return sshVM(creds, a, vm, nil, true, stdin, stdout, stderr)
+		fmt.Fprintf(stderr, "entering vm %s (killed on exit) …\n", vm.SandboxID)
+		return sshVM(creds, a, vm, nil, false, stdin, stdout, stderr)
 	}
 	return nil
 }

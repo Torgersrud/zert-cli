@@ -159,10 +159,10 @@ usage:
   zert ls                        list your VMs
   zert vm [--keep] [ssh args..]  create a VM and ssh into it (kill on exit)
   zert kill <id>                 terminate a VM
-  zert <path>                    copy a local dir/file into your vm
-                                 (creates one if none is running, and
-                                 sshs into it after the copy if this
-                                 command created it — the vm stays up)
+   zert <path>                    copy a local dir/file into your vm
+                                  (creates one if none is running, and
+                                  sshs into it after the copy if this
+                                  command created it — killed on exit)
                                   names may only use letters, digits and
                                   ._@%+=:,- — rename or archive the rest
                                   the copy is streamed as one compressed

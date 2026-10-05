@@ -137,7 +137,8 @@ func usage() {
 	fmt.Fprint(os.Stderr, `zert — customer CLI
 
 usage:
-  zert login [--host URL]        authenticate and store credentials
+  zert login [--host URL] [--insecure]
+                                 authenticate and store credentials
   zert logout                    delete stored credentials
   zert me                        show profile, quota, pubkey
   zert ls                        list your VMs
@@ -153,6 +154,7 @@ host: --host flag > $ZERT_HOST > stored credentials
 func cmdLogin(args []string) error {
 	fs := newFlagSet("login")
 	host := fs.String("host", "", "server URL")
+	insecure := fs.Bool("insecure", false, "allow plain http:// hosts (credentials sent unencrypted)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -167,6 +169,13 @@ func cmdLogin(args []string) error {
 	if *host == "" {
 		return errors.New("no server: pass --host or set ZERT_HOST")
 	}
+	normalized, err := checkHostAllowInsecure(*host, *insecure)
+	if err != nil {
+		return err
+	}
+	if *insecure && strings.HasPrefix(normalized, "http://") {
+		fmt.Fprintln(os.Stderr, "zert: WARNING: sending credentials over an unencrypted connection")
+	}
 	email, err := promptLine("email: ")
 	if err != nil {
 		return err
@@ -175,7 +184,7 @@ func cmdLogin(args []string) error {
 	if err != nil {
 		return err
 	}
-	resp, data, err := api{host: *host}.do("POST", "/v1/login",
+	resp, data, err := api{host: normalized}.do("POST", "/v1/login",
 		map[string]string{"email": email, "password": password})
 	if err != nil {
 		return err
@@ -195,10 +204,10 @@ func cmdLogin(args []string) error {
 	if err := json.Unmarshal(data, &out); err != nil || out.Token == "" {
 		return errors.New("malformed login response")
 	}
-	if err := saveCredentials(&Credentials{Host: *host, Email: email, Token: out.Token}); err != nil {
+	if err := saveCredentials(&Credentials{Host: normalized, Email: email, Token: out.Token, Insecure: *insecure}); err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stderr, "logged in as %s (%s)\n", email, *host)
+	fmt.Fprintf(os.Stderr, "logged in as %s (%s)\n", email, normalized)
 	return nil
 }
 
@@ -216,7 +225,16 @@ func requireLogin() (*Credentials, api) {
 		fmt.Fprintln(os.Stderr, "zert: not logged in — run `zert login`")
 		os.Exit(1)
 	}
-	return c, api{host: c.Host, token: c.Token}
+	host := c.Host
+	if !c.Insecure {
+		h, err := checkHost(c.Host)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "zert: stored host is not allowed (use https): %v\n", err)
+			os.Exit(1)
+		}
+		host = h
+	}
+	return c, api{host: host, token: c.Token}
 }
 
 type meInfo struct {

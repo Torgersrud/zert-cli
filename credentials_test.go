@@ -21,6 +21,21 @@ func TestCredentialsRoundTrip(t *testing.T) {
 	}
 }
 
+func TestCredentialsInsecureRoundTrip(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	want := &Credentials{Host: "http://zert.example.com", Email: "bob@example.com", Token: "tok-123", Insecure: true}
+	if err := saveCredentials(want); err != nil {
+		t.Fatal(err)
+	}
+	got, err := loadCredentials()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if *got != *want {
+		t.Fatalf("insecure flag lost: %+v != %+v", *got, *want)
+	}
+}
+
 func TestCredentialsFileMode0600(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	if err := saveCredentials(&Credentials{Host: "h", Email: "e", Token: "t"}); err != nil {

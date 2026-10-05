@@ -9,9 +9,10 @@ import (
 )
 
 type Credentials struct {
-	Host  string
-	Email string
-	Token string
+	Host     string
+	Email    string
+	Token    string
+	Insecure bool
 }
 
 func credentialsPath() (string, error) {
@@ -49,6 +50,8 @@ func loadCredentials() (*Credentials, error) {
 			c.Email = strings.TrimSpace(v)
 		case "token":
 			c.Token = strings.TrimSpace(v)
+		case "insecure":
+			c.Insecure = strings.TrimSpace(v) == "true"
 		}
 	}
 	if c.Host == "" || c.Token == "" {
@@ -66,6 +69,9 @@ func saveCredentials(c *Credentials) error {
 		return err
 	}
 	body := fmt.Sprintf("host = %s\nemail = %s\ntoken = %s\n", c.Host, c.Email, c.Token)
+	if c.Insecure {
+		body += "insecure = true\n"
+	}
 	return os.WriteFile(path, []byte(body), 0600)
 }
 

@@ -77,6 +77,19 @@ func TestLoginHostPrecedence(t *testing.T) {
 	}
 }
 
+func TestLoginRejectsInsecureHostBeforeNetwork(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	overridePrompts(t, "bob@example.com", "x")
+
+	// no server needed: checkHost must fail before any dial
+	if err := cmdLogin([]string{"--host", "http://example.com"}); err == nil {
+		t.Fatal("expected error for non-loopback http host")
+	}
+	if _, err := loadCredentials(); err == nil {
+		t.Fatal("credentials saved despite rejected host")
+	}
+}
+
 func TestMeSessionExpiredMapping(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"detail":"invalid or expired token"}`, 401)

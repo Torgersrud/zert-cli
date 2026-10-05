@@ -122,6 +122,7 @@ func cmdTunnel(args []string) error {
 	}
 	token := os.Getenv("ZERT_TUNNEL_TOKEN")
 	host := os.Getenv("ZERT_HOST")
+	insecure := false
 	if token == "" || host == "" {
 		c, err := loadCredentials()
 		if err != nil {
@@ -132,7 +133,15 @@ func cmdTunnel(args []string) error {
 		}
 		if host == "" {
 			host = c.Host
+			insecure = c.Insecure
 		}
+	}
+	if !insecure {
+		normalized, err := checkHost(host)
+		if err != nil {
+			return err
+		}
+		host = normalized
 	}
 	return tunnelRun(context.Background(), host, id, token, os.Stdin, os.Stdout)
 }

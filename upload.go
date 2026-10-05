@@ -76,7 +76,7 @@ func pickLiveVM(rows []vmRow) *vmRow {
 }
 
 // uploadRun is cmdUpload with injectable stdio and scp binary (for tests).
-func uploadRun(arg string, stdout, stderr io.Writer) error {
+func uploadRun(arg string, stdin io.Reader, stdout, stderr io.Writer) error {
 	src := expandTilde(arg)
 	base := filepath.Base(strings.TrimRight(src, "/"))
 	if !scpRemoteBase.MatchString(base) {
@@ -110,12 +110,14 @@ func uploadRun(arg string, stdout, stderr io.Writer) error {
 		return err
 	}
 	vm := pickLiveVM(rows)
+	created := false
 	if vm == nil {
 		fmt.Fprintln(stderr, "no live vm — creating one …")
 		vm, err = createVM(a)
 		if err != nil {
 			return err
 		}
+		created = true
 	}
 
 	dest := "user@" + vm.SandboxID + ":~/" + base
@@ -153,6 +155,11 @@ func uploadRun(arg string, stdout, stderr io.Writer) error {
 		}
 		return fmt.Errorf("spawn scp: %w", err)
 	}
+
+	if created {
+		fmt.Fprintf(stderr, "entering vm %s (vm stays up after exit) …\n", vm.SandboxID)
+		return sshVM(creds, a, vm, nil, true, stdin, stdout, stderr)
+	}
 	return nil
 }
 
@@ -160,5 +167,5 @@ func cmdUpload(args []string) error {
 	if len(args) != 1 {
 		return errors.New("usage: zert <path>")
 	}
-	return uploadRun(args[0], os.Stdout, os.Stderr)
+	return uploadRun(args[0], os.Stdin, os.Stdout, os.Stderr)
 }

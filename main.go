@@ -159,7 +159,9 @@ usage:
   zert vm [--keep] [ssh args..]  create a VM and ssh into it (kill on exit)
   zert kill <id>                 terminate a VM
   zert <path>                    copy a local dir/file into your vm
-                                 (creates one if none is running)
+                                 (creates one if none is running, and
+                                 sshs into it after the copy if this
+                                 command created it — the vm stays up)
                                  names may only use letters, digits and
                                  ._@%+=:,- — rename or archive the rest
                                  symlinks inside a dir are followed by scp -r
@@ -520,6 +522,12 @@ func vmRun(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	fmt.Fprintf(stderr, "vm %s ready (expires in %s)\n", vm.SandboxID,
 		time.Until(time.Unix(int64(vm.ExpiresAt), 0)).Round(time.Second))
 
+	return sshVM(creds, a, vm, sshArgs, keep, stdin, stdout, stderr)
+}
+
+// sshVM opens an interactive ssh session to the vm through the tunnel,
+// forwarding signals and killing the vm on exit unless keep is set.
+func sshVM(creds *Credentials, a api, vm *vmRow, sshArgs []string, keep bool, stdin io.Reader, stdout, stderr io.Writer) error {
 	self, err := os.Executable()
 	if err != nil {
 		self = "zert"

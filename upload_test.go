@@ -51,9 +51,10 @@ func TestUploadCreatesVMWhenNoneLive(t *testing.T) {
 	fs := newFakeServer(t)
 	setupHome(t, fs.URL)
 	logPath := fakeSCP(t)
+	fakeSSH(t)
 	dir := tempDirNamed(t, "mydir")
 
-	if err := uploadRun(dir, os.Stdout, os.Stderr); err != nil {
+	if err := uploadRun(dir, strings.NewReader(""), os.Stdout, os.Stderr); err != nil {
 		t.Fatal(err)
 	}
 	logged := readLog(t, logPath)
@@ -75,10 +76,36 @@ func TestUploadCreatesVMWhenNoneLive(t *testing.T) {
 	}
 }
 
+func TestUploadCreatedVmAutoSshes(t *testing.T) {
+	fs := newFakeServer(t)
+	setupHome(t, fs.URL)
+	fakeSCP(t)
+	sshLog := fakeSSH(t)
+	dir := tempDirNamed(t, "mydir")
+
+	if err := uploadRun(dir, strings.NewReader(""), os.Stdout, os.Stderr); err != nil {
+		t.Fatal(err)
+	}
+	logged := readLog(t, sshLog)
+	if !strings.Contains(logged, "user@vm123") || !strings.Contains(logged, "tunnel vm123") {
+		t.Fatalf("no auto-ssh into created vm: %s", logged)
+	}
+	if !strings.Contains(logged, "TOKEN tok-9") {
+		t.Fatalf("token not passed via ZERT_TUNNEL_TOKEN env: %s", logged)
+	}
+	fs.mu.Lock()
+	deleted := fs.deleted
+	fs.mu.Unlock()
+	if len(deleted) != 0 {
+		t.Fatalf("vm must stay up after auto-ssh exit, got deletes %v", deleted)
+	}
+}
+
 func TestUploadUsesLiveVM(t *testing.T) {
 	fs := newFakeServer(t)
 	setupHome(t, fs.URL)
 	logPath := fakeSCP(t)
+	sshLog := fakeSSH(t)
 	fs.live = []string{"vmlive"}
 	fs.create = func(w http.ResponseWriter, _ int) {
 		t.Error("unexpected POST /v1/vm while a vm is live")
@@ -86,12 +113,15 @@ func TestUploadUsesLiveVM(t *testing.T) {
 	}
 	dir := tempDirNamed(t, "proj")
 
-	if err := uploadRun(dir+"/", os.Stdout, os.Stderr); err != nil {
+	if err := uploadRun(dir+"/", strings.NewReader(""), os.Stdout, os.Stderr); err != nil {
 		t.Fatal(err)
 	}
 	logged := readLog(t, logPath)
 	if !strings.Contains(logged, "tunnel vmlive") || !strings.Contains(logged, "user@vmlive:~/proj") {
 		t.Fatalf("live vm not used or trailing slash mishandled: %s", logged)
+	}
+	if _, err := os.Stat(sshLog); err == nil {
+		t.Fatal("must not ssh when reusing a live vm")
 	}
 }
 
@@ -102,6 +132,7 @@ func TestUploadPubkeyBootstrap(t *testing.T) {
 	fs.pubkey = nil
 	fs.mu.Unlock()
 	fakeSCP(t)
+	fakeSSH(t)
 
 	sshDir := filepath.Join(home, ".ssh")
 	if err := os.MkdirAll(sshDir, 0700); err != nil {
@@ -112,7 +143,7 @@ func TestUploadPubkeyBootstrap(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := uploadRun(tempDirNamed(t, "d"), os.Stdout, os.Stderr); err != nil {
+	if err := uploadRun(tempDirNamed(t, "d"), strings.NewReader(""), os.Stdout, os.Stderr); err != nil {
 		t.Fatal(err)
 	}
 	fs.mu.Lock()
@@ -129,7 +160,7 @@ func TestUploadScpFailureExitCode(t *testing.T) {
 	fakeSCP(t)
 	t.Setenv("FAKE_SCP_EXIT", "1")
 
-	err := uploadRun(tempDirNamed(t, "d"), os.Stdout, os.Stderr)
+	err := uploadRun(tempDirNamed(t, "d"), strings.NewReader(""), os.Stdout, os.Stderr)
 	var ee *exitError
 	if !errors.As(err, &ee) || ee.code != 1 {
 		t.Fatalf("want exit 1, got %v", err)
@@ -154,9 +185,10 @@ func TestUploadDoubleDash(t *testing.T) {
 	fs := newFakeServer(t)
 	setupHome(t, fs.URL)
 	logPath := fakeSCP(t)
+	fakeSSH(t)
 	dir := tempDirNamed(t, "mydir")
 
-	if err := uploadRun(dir, os.Stdout, os.Stderr); err != nil {
+	if err := uploadRun(dir, strings.NewReader(""), os.Stdout, os.Stderr); err != nil {
 		t.Fatal(err)
 	}
 	logged := readLog(t, logPath)
@@ -187,8 +219,9 @@ func TestUploadDashFileArrivesPrefixed(t *testing.T) {
 	fs := newFakeServer(t)
 	setupHome(t, fs.URL)
 	logPath := fakeSCP(t)
+	fakeSSH(t)
 
-	if err := uploadRun("-oProxyCommand=x", os.Stdout, os.Stderr); err != nil {
+	if err := uploadRun("-oProxyCommand=x", strings.NewReader(""), os.Stdout, os.Stderr); err != nil {
 		t.Fatal(err)
 	}
 	logged := readLog(t, logPath)
@@ -201,8 +234,9 @@ func TestUploadColonFileArrivesPrefixed(t *testing.T) {
 	fs := newFakeServer(t)
 	setupHome(t, fs.URL)
 	logPath := fakeSCP(t)
+	fakeSSH(t)
 
-	if err := uploadRun("a:b", os.Stdout, os.Stderr); err != nil {
+	if err := uploadRun("a:b", strings.NewReader(""), os.Stdout, os.Stderr); err != nil {
 		t.Fatal(err)
 	}
 	logged := readLog(t, logPath)
@@ -216,7 +250,7 @@ func TestUploadMetacharNameRefused(t *testing.T) {
 	setupHome(t, fs.URL)
 	logPath := fakeSCP(t)
 
-	err := uploadRun("a;b", os.Stdout, os.Stderr)
+	err := uploadRun("a;b", strings.NewReader(""), os.Stdout, os.Stderr)
 	if err == nil {
 		t.Fatal("expected error for shell metacharacter in name")
 	}
@@ -244,7 +278,7 @@ func TestUploadBadNameNoNetwork(t *testing.T) {
 	setupHome(t, ts.URL)
 	fakeSCP(t)
 
-	if err := uploadRun("a;b", os.Stdout, os.Stderr); err == nil {
+	if err := uploadRun("a;b", strings.NewReader(""), os.Stdout, os.Stderr); err == nil {
 		t.Fatal("expected error for bad file name")
 	}
 	if n := atomic.LoadInt32(&hits); n != 0 {
@@ -261,7 +295,7 @@ func TestUploadRefusesRoot(t *testing.T) {
 		http.Error(w, `{"detail":"no"}`, 500)
 	}
 
-	err := uploadRun("/", os.Stdout, os.Stderr)
+	err := uploadRun("/", strings.NewReader(""), os.Stdout, os.Stderr)
 	if err == nil || !strings.Contains(err.Error(), "root") {
 		t.Fatalf("expected root refusal, got %v", err)
 	}
@@ -281,7 +315,7 @@ func TestUploadRefusesHome(t *testing.T) {
 	home := setupHome(t, fs.URL)
 	logPath := fakeSCP(t)
 
-	err := uploadRun(home, os.Stdout, os.Stderr)
+	err := uploadRun(home, strings.NewReader(""), os.Stdout, os.Stderr)
 	if err == nil || !strings.Contains(err.Error(), "home directory") {
 		t.Fatalf("expected home refusal, got %v", err)
 	}
@@ -294,9 +328,10 @@ func TestUploadTempDirPassesThrough(t *testing.T) {
 	fs := newFakeServer(t)
 	setupHome(t, fs.URL)
 	logPath := fakeSCP(t)
+	fakeSSH(t)
 	dir := tempDirNamed(t, "sub")
 
-	if err := uploadRun(dir, os.Stdout, os.Stderr); err != nil {
+	if err := uploadRun(dir, strings.NewReader(""), os.Stdout, os.Stderr); err != nil {
 		t.Fatal(err)
 	}
 	logged := readLog(t, logPath)

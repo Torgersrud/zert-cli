@@ -37,6 +37,7 @@ func looksLikePath(arg string) bool {
 	if arg == "" || strings.Contains(arg, "@") {
 		return false
 	}
+	// #nosec G703 -- stat of a user CLI arg is the dispatch heuristic by design
 	_, err := os.Stat(expandTilde(arg))
 	return err == nil
 }
@@ -95,6 +96,7 @@ func packTar(w io.Writer, src, base string) (int64, int64, error) {
 	}
 	tw := tar.NewWriter(zw)
 	var raw int64
+	// #nosec G703 -- src is the user-requested upload source, guarded by refuseUnsafe before we get here
 	fi, err := os.Stat(src)
 	if err != nil {
 		return 0, 0, err
@@ -131,6 +133,7 @@ func addTree(tw *tar.Writer, dir, name string, fi os.FileInfo, raw *int64) error
 	}
 	for _, e := range entries {
 		p := filepath.Join(dir, e.Name())
+		// #nosec G703 -- walking the user-requested source tree is the point of the command
 		st, err := os.Stat(p)
 		if err != nil {
 			continue // broken symlink or vanished file
@@ -160,6 +163,7 @@ func addFile(tw *tar.Writer, path, name string, fi os.FileInfo, raw *int64) erro
 		return err
 	}
 	hdr.Name = name
+	// #nosec G304 G703 -- opening files from the user-requested source tree is the point of the command
 	f, err := os.Open(path)
 	if err != nil {
 		return err
@@ -263,6 +267,7 @@ func uploadRun(arg string, stdin io.Reader, stdout, stderr io.Writer) error {
 	sshCmd.Env = childEnv(os.Environ(), creds.Token, creds.Host)
 
 	kind := "path"
+	// #nosec G703 -- stat of the user-requested source, only used to label output
 	if st, err := os.Stat(src); err == nil {
 		if st.IsDir() {
 			kind = "dir"
@@ -275,7 +280,7 @@ func uploadRun(arg string, stdin io.Reader, stdout, stderr io.Writer) error {
 	pr, pw := io.Pipe()
 	sshCmd.Stdin = pr
 	if err := sshCmd.Start(); err != nil {
-		pw.Close()
+		_ = pw.Close()
 		return fmt.Errorf("spawn ssh: %w", err)
 	}
 	packDone := make(chan error, 1)

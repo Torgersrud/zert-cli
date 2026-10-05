@@ -28,6 +28,7 @@ func loadCredentials() (*Credentials, error) {
 	if err != nil {
 		return nil, err
 	}
+	// #nosec G304 -- path comes from os.UserConfigDir, not user input
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err

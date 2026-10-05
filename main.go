@@ -64,6 +64,7 @@ func (a api) do(method, path string, body any) (*http.Response, []byte, error) {
 		}
 		rd = bytes.NewReader(b)
 	}
+	// #nosec G704 -- a.host is the customer's own API host from stored credentials, enforced to https by checkHost (plain http only for loopback)
 	req, err := http.NewRequest(method, strings.TrimRight(a.host, "/")+path, rd)
 	if err != nil {
 		return nil, nil, err
@@ -74,6 +75,7 @@ func (a api) do(method, path string, body any) (*http.Response, []byte, error) {
 	if a.token != "" {
 		req.Header.Set("authorization", "Bearer "+a.token)
 	}
+	// #nosec G704 -- same validated customer host as NewRequest above; this is the tool's purpose, not user-tainted URL fetch
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, nil, err
@@ -241,8 +243,8 @@ func cmdLogout([]string) error {
 		req, _ := http.NewRequest("POST", strings.TrimRight(c.Host, "/")+logoutPath, nil)
 		req.Header.Set("authorization", "Bearer "+c.Token)
 		if resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req); err == nil {
-			io.Copy(io.Discard, resp.Body)
-			resp.Body.Close()
+			_, _ = io.Copy(io.Discard, resp.Body)
+			_ = resp.Body.Close()
 			revoked = resp.StatusCode >= 200 && resp.StatusCode < 300
 		}
 	}
@@ -354,7 +356,7 @@ func printVMs(rows []vmRow) {
 	for _, r := range rows {
 		fmt.Fprintf(w, "%s\t%v\t%s\t%v\n", r.SandboxID, r.Live, expiryLabel(r), r.Creating)
 	}
-	w.Flush()
+	_ = w.Flush()
 }
 
 func cmdLS([]string) error {
@@ -425,6 +427,7 @@ func findLocalPubkey() (string, error) {
 		return "", err
 	}
 	for _, name := range []string{"id_ed25519.pub", "id_rsa.pub"} {
+		// #nosec G304 -- fixed constant filenames under ~/.ssh, nothing user-tainted in the path
 		if b, err := os.ReadFile(filepath.Join(home, ".ssh", name)); err == nil {
 			return strings.TrimSpace(string(b)), nil
 		}
@@ -555,7 +558,7 @@ func sshVM(creds *Credentials, a api, vm *vmRow, sshArgs []string, keep bool, st
 	select {
 	case waitErr = <-done:
 	case sig := <-sigc:
-		sshCmd.Process.Signal(sig)
+		_ = sshCmd.Process.Signal(sig)
 		waitErr = <-done
 	}
 

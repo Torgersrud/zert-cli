@@ -270,8 +270,15 @@ func listVMs(a api) ([]vmRow, error) {
 		return nil, mapped(resp, data)
 	}
 	var rows []vmRow
-	err = json.Unmarshal(data, &rows)
-	return rows, err
+	if err := json.Unmarshal(data, &rows); err != nil {
+		return nil, err
+	}
+	for _, r := range rows {
+		if !validSandboxID(r.SandboxID) {
+			return nil, errors.New("malformed server response: invalid vm id")
+		}
+	}
+	return rows, nil
 }
 
 func expiryLabel(r vmRow) string {
@@ -307,6 +314,9 @@ func cmdLS([]string) error {
 func cmdKill(args []string) error {
 	if len(args) != 1 || args[0] == "" {
 		return errors.New("usage: zert kill <id>")
+	}
+	if !validSandboxID(args[0]) {
+		return errors.New("invalid vm id")
 	}
 	_, a := requireLogin()
 	resp, data, err := a.do("DELETE", "/v1/vm/"+args[0], nil)
@@ -387,6 +397,9 @@ func createVM(a api) (*vmRow, error) {
 	if err := json.Unmarshal(data, &out); err != nil || out.SandboxID == "" {
 		return nil, errors.New("malformed create response")
 	}
+	if !validSandboxID(out.SandboxID) {
+		return nil, errors.New("malformed server response: invalid vm id")
+	}
 	return &vmRow{SandboxID: out.SandboxID, ExpiresAt: out.ExpiresAt, Live: true}, nil
 }
 
@@ -433,7 +446,7 @@ func vmRun(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	}
 	sshCmd := exec.Command(sshPath)
 	sshCmd.Args = append(sshCmd.Args,
-		"-o", "ProxyCommand="+self+" tunnel "+vm.SandboxID,
+		"-o", proxyCommand(self, vm.SandboxID),
 		"-o", "StrictHostKeyChecking=accept-new",
 	)
 	sshCmd.Args = append(sshCmd.Args, sshArgs...)

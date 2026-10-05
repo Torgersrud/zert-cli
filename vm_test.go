@@ -258,6 +258,37 @@ func TestVM502RetriesOnce(t *testing.T) {
 	}
 }
 
+func TestCreateVMRejectsMaliciousID(t *testing.T) {
+	fs := newFakeServer(t)
+	fs.create = func(w http.ResponseWriter, _ int) {
+		w.WriteHeader(201)
+		io.WriteString(w, `{"sandbox_id":"x; touch /tmp/pwned","expires_at":9999999999}`)
+	}
+	_, err := createVM(api{host: fs.URL})
+	if err == nil || !strings.Contains(err.Error(), "invalid vm id") {
+		t.Fatalf("want invalid-vm-id error, got %v", err)
+	}
+	if _, statErr := os.Stat("/tmp/pwned"); statErr == nil {
+		t.Fatal("injection executed: /tmp/pwned exists")
+	}
+}
+
+func TestVMNoSpawnOnMaliciousID(t *testing.T) {
+	fs := newFakeServer(t)
+	setupHome(t, fs.URL)
+	logPath := fakeSSH(t)
+	fs.create = func(w http.ResponseWriter, _ int) {
+		w.WriteHeader(201)
+		io.WriteString(w, `{"sandbox_id":"x; touch /tmp/pwned"}`)
+	}
+	if err := vmRun([]string{"--keep"}, strings.NewReader(""), os.Stdout, io.Discard); err == nil {
+		t.Fatal("expected error from malicious id")
+	}
+	if _, err := os.Stat(logPath); err == nil {
+		t.Fatal("ssh spawned despite invalid vm id")
+	}
+}
+
 func TestVMQuota409ShowsList(t *testing.T) {
 	fs := newFakeServer(t)
 	setupHome(t, fs.URL)

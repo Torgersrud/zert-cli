@@ -117,6 +117,9 @@ func cmdTunnel(args []string) error {
 		return fmt.Errorf("usage: zert tunnel <vm-id>")
 	}
 	id := fs.Arg(0)
+	if !validSandboxID(id) {
+		return errors.New("invalid vm id")
+	}
 	token := os.Getenv("ZERT_TUNNEL_TOKEN")
 	host := os.Getenv("ZERT_HOST")
 	if token == "" || host == "" {

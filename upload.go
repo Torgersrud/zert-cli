@@ -73,7 +73,7 @@ func uploadRun(arg string, stdout, stderr io.Writer) error {
 	scpCmd := exec.Command(scpPath)
 	scpCmd.Args = append(scpCmd.Args,
 		"-r",
-		"-o", "ProxyCommand="+self+" tunnel "+vm.SandboxID,
+		"-o", proxyCommand(self, vm.SandboxID),
 		"-o", "StrictHostKeyChecking=accept-new",
 		src, dest,
 	)

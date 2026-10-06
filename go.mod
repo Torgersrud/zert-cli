@@ -1,4 +1,4 @@
-module zert
+module github.com/Torgersrud/zert-cli
 
 go 1.27.1
 

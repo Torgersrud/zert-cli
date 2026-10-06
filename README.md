@@ -1,8 +1,4 @@
-# zert
-
-[![CI](https://github.com/Torgersrud/zert-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/Torgersrud/zert-cli/actions/workflows/ci.yml)
-[![Go Reference](https://pkg.go.dev/badge/github.com/Torgersrud/zert-cli.svg)](https://pkg.go.dev/github.com/Torgersrud/zert-cli)
-[![Go Report Card](https://goreportcard.com/badge/github.com/Torgersrud/zert-cli)](https://goreportcard.com/report/github.com/Torgersrud/zert-cli)
+# Zert
 
 Zert-cli is the client for the [zert](https://zert.no) sandbox service. Boot a vm hosted in Norway, copy your repo, work inside an airgapped development enviroment, with access to Norwigian hosted AI. Debug, build or test knowing your data is safe.
 

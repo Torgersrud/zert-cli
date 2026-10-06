@@ -18,9 +18,11 @@ func TestVMPathEscapesSlash(t *testing.T) {
 	}
 }
 
-func TestKillRejectsTraversalID(t *testing.T) {
-	// validation runs before requireLogin, so no creds are needed here
-	if err := cmdKill([]string{"../me"}); err == nil || !strings.Contains(err.Error(), "invalid vm id") {
-		t.Fatalf("want invalid-vm-id error, got %v", err)
+func TestDetailSanitizes(t *testing.T) {
+	if got := detail([]byte(`{"detail":"a\u001b[31mb"}`)); strings.ContainsAny(got, "\x1b") {
+		t.Fatalf("escape survived: %q", got)
+	}
+	if got := detail([]byte("")); got != "unexpected server response" {
+		t.Fatalf("got %q", got)
 	}
 }

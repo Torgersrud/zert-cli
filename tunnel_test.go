@@ -119,3 +119,48 @@ func TestTunnelCloseCodes(t *testing.T) {
 		}
 	}
 }
+
+func TestResolveTunnelTargetMatchingHost(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	if err := saveCredentials(&Credentials{Host: "http://127.0.0.1:9000", Token: "tok", Email: "e"}); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("ZERT_TUNNEL_TOKEN", "")
+	t.Setenv("ZERT_HOST", "http://127.0.0.1:9000")
+
+	host, token, err := resolveTunnelTarget()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if host != "http://127.0.0.1:9000" || token != "tok" {
+		t.Fatalf("got (%q, %q), want (http://127.0.0.1:9000, tok)", host, token)
+	}
+}
+
+func TestResolveTunnelTargetMismatchedHost(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	if err := saveCredentials(&Credentials{Host: "https://a.example", Token: "tok", Email: "e"}); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("ZERT_TUNNEL_TOKEN", "")
+	t.Setenv("ZERT_HOST", "https://b.example")
+
+	_, _, err := resolveTunnelTarget()
+	if err == nil || !strings.Contains(err.Error(), "ZERT_HOST differs from the host you logged in to") {
+		t.Fatalf("want ZERT_HOST-differs error, got %v", err)
+	}
+}
+
+func TestResolveTunnelTargetEnvTokenEnvHost(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("ZERT_TUNNEL_TOKEN", "envtok")
+	t.Setenv("ZERT_HOST", "http://127.0.0.1:1234")
+
+	host, token, err := resolveTunnelTarget()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if host != "http://127.0.0.1:1234" || token != "envtok" {
+		t.Fatalf("got (%q, %q), want (http://127.0.0.1:1234, envtok)", host, token)
+	}
+}

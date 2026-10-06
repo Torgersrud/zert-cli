@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -75,5 +76,29 @@ func TestLogoutDeletesFile(t *testing.T) {
 	}
 	if _, err := loadCredentials(); err == nil {
 		t.Fatal("credentials still loadable after logout")
+	}
+}
+
+func TestSaveCredentialsTightensPermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix permissions only")
+	}
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	if err := saveCredentials(&Credentials{Host: "h", Email: "e", Token: "t"}); err != nil {
+		t.Fatal(err)
+	}
+	path, _ := credentialsPath()
+	if err := os.Chmod(path, 0666); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveCredentials(&Credentials{Host: "h", Email: "e", Token: "t"}); err != nil {
+		t.Fatal(err)
+	}
+	st, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := st.Mode().Perm(); perm != 0600 {
+		t.Fatalf("mode = %o, want 0600", perm)
 	}
 }

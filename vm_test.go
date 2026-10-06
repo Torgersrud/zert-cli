@@ -307,3 +307,66 @@ func TestVMQuota409ShowsList(t *testing.T) {
 		t.Fatalf("want quota-reached error, got %v", err)
 	}
 }
+
+func countPrefix(entries []string, prefix string) []string {
+	var got []string
+	for _, kv := range entries {
+		if strings.HasPrefix(kv, prefix) {
+			got = append(got, kv)
+		}
+	}
+	return got
+}
+
+func TestChildEnv(t *testing.T) {
+	base := []string{"PATH=/bin", "ZERT_HOST=http://old", "ZERT_TUNNEL_TOKEN=old", "OTHER=1"}
+	got := childEnv(base, "tok", "https://new")
+
+	if h := countPrefix(got, "ZERT_HOST="); len(h) != 1 || h[0] != "ZERT_HOST=https://new" {
+		t.Fatalf("ZERT_HOST entries = %v, want exactly [ZERT_HOST=https://new]", h)
+	}
+	if tk := countPrefix(got, "ZERT_TUNNEL_TOKEN="); len(tk) != 1 || tk[0] != "ZERT_TUNNEL_TOKEN=tok" {
+		t.Fatalf("ZERT_TUNNEL_TOKEN entries = %v, want exactly [ZERT_TUNNEL_TOKEN=tok]", tk)
+	}
+	for _, kv := range got {
+		if kv == "ZERT_HOST=http://old" || kv == "ZERT_TUNNEL_TOKEN=old" {
+			t.Fatalf("stale value not removed: %s", kv)
+		}
+	}
+	joined := strings.Join(got, "\n")
+	if !strings.Contains(joined, "PATH=/bin") || !strings.Contains(joined, "OTHER=1") {
+		t.Fatalf("unrelated entries dropped: %v", got)
+	}
+}
+
+func TestEnsurePubkeyEmptyKey(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	sshDir := filepath.Join(home, ".ssh")
+	if err := os.MkdirAll(sshDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sshDir, "id_ed25519.pub"), []byte("   \n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	err := ensurePubkey(api{}, &meInfo{}, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "empty") {
+		t.Fatalf("want empty-key error, got %v", err)
+	}
+}
+
+func TestEnsurePubkeyRejectsNonKey(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	sshDir := filepath.Join(home, ".ssh")
+	if err := os.MkdirAll(sshDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sshDir, "id_ed25519.pub"), []byte("garbage data\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	err := ensurePubkey(api{}, &meInfo{}, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "not an ssh public key") {
+		t.Fatalf("want not-an-ssh-key error, got %v", err)
+	}
+}

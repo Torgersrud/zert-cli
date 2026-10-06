@@ -3,15 +3,60 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/coder/websocket"
 )
+
+func TestKeepaliveReportsPingFailure(t *testing.T) {
+	errc := make(chan error, 1)
+	var calls int32
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go keepalive(ctx, 5*time.Millisecond, 5*time.Millisecond, func(context.Context) error {
+		if atomic.AddInt32(&calls, 1) == 3 {
+			return errors.New("pong timeout")
+		}
+		return nil
+	}, errc)
+	select {
+	case err := <-errc:
+		if !strings.Contains(err.Error(), "pong timeout") {
+			t.Fatalf("got %v, want keepalive pong timeout", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("keepalive never reported the failing ping")
+	}
+}
+
+func TestKeepaliveStopsOnCancel(t *testing.T) {
+	pinged := make(chan struct{}, 10)
+	errc := make(chan error, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	go keepalive(ctx, 5*time.Millisecond, 5*time.Millisecond, func(context.Context) error {
+		select {
+		case pinged <- struct{}{}:
+		default:
+		}
+		return nil
+	}, errc)
+	<-pinged
+	cancel()
+	time.Sleep(50 * time.Millisecond)
+	select {
+	case err := <-errc:
+		t.Fatalf("keepalive reported %v after cancel", err)
+	default:
+	}
+}
 
 func TestWSURL(t *testing.T) {
 	for in, want := range map[string]string{
@@ -78,6 +123,27 @@ func TestTunnelRelayAndAuthHeader(t *testing.T) {
 	}
 	if gotAuth != "Bearer tok-1" {
 		t.Fatalf("auth header = %q, want Bearer token", gotAuth)
+	}
+}
+
+func TestTunnelRelaysLargeFrame(t *testing.T) {
+	// coder/websocket's default read limit is 32 KiB; a single larger frame
+	// (port-forwarded burst) used to kill the tunnel with a 1009 close.
+	big := bytes.Repeat([]byte("x"), 64*1024)
+	ts := stubTunnelServer(t, func(_ http.ResponseWriter, _ *http.Request, ws *websocket.Conn) {
+		ctx := context.Background()
+		ws.Write(ctx, websocket.MessageBinary, big)
+		ws.Close(websocket.StatusNormalClosure, "bye")
+	})
+	defer ts.Close()
+
+	var out bytes.Buffer
+	pr, _ := io.Pipe() // never delivers: relay ends via ws close
+	if err := tunnelRun(context.Background(), ts.URL, "vm1", "tok", pr, &out); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(out.Bytes(), big) {
+		t.Fatalf("relay got %d bytes, want %d", out.Len(), len(big))
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/coder/websocket"
 )
@@ -45,9 +46,40 @@ var closeCodeMsg = map[websocket.StatusCode]string{
 	4410: "vm expired",
 }
 
+const (
+	keepaliveEvery   = 25 * time.Second
+	keepaliveTimeout = 20 * time.Second
+	// maxFrame bounds a single relayed WS message; matches the server-side
+	// relay limit in ~/dev/public.py (16 MiB).
+	maxFrame = 16 << 20
+)
+
+// keepalive pings every interval on a dead-link probe schedule and reports the
+// first failure to errc: ping frames also reset idle timers on intermediaries.
+func keepalive(ctx context.Context, interval, timeout time.Duration, ping func(context.Context) error, errc chan<- error) {
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			pctx, cancel := context.WithTimeout(ctx, timeout)
+			err := ping(pctx)
+			cancel()
+			if err != nil {
+				errc <- fmt.Errorf("keepalive: %w", err)
+				return
+			}
+		}
+	}
+}
+
 // tunnelRun relays raw bytes between in/out and the /v1/tunnel/{id} relay.
 // The token travels only in the authorization header (never the URL/argv).
 func tunnelRun(ctx context.Context, host, id, token string, in io.Reader, out io.Writer) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	u, err := wsURL(host, id)
 	if err != nil {
 		return err
@@ -63,8 +95,12 @@ func tunnelRun(ctx context.Context, host, id, token string, in io.Reader, out io
 		return err
 	}
 	defer ws.Close(websocket.StatusNormalClosure, "")
+	// default read limit is 32 KiB; port-forwarded traffic arrives as single
+	// large frames and would trip a 1009 close mid-session
+	ws.SetReadLimit(maxFrame)
 
-	errc := make(chan error, 2)
+	errc := make(chan error, 3)
+	go keepalive(ctx, keepaliveEvery, keepaliveTimeout, ws.Ping, errc)
 	go func() {
 		buf := make([]byte, 32*1024)
 		for {

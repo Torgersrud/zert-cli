@@ -259,6 +259,8 @@ func uploadRun(arg string, stdin io.Reader, stdout, stderr io.Writer) error {
 	sshCmd.Args = append(sshCmd.Args,
 		"-o", proxyCommand(self, vm.SandboxID),
 		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "ServerAliveInterval=30",
+		"-o", "ServerAliveCountMax=4",
 		dest,
 		uploadRemoteCmd,
 	)

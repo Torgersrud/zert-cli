@@ -168,6 +168,8 @@ func sshVM(creds *Credentials, a api, vm *vmRow, sshArgs []string, keep bool, st
 	sshCmd.Args = append(sshCmd.Args,
 		"-o", proxyCommand(self, vm.SandboxID),
 		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "ServerAliveInterval=30",
+		"-o", "ServerAliveCountMax=4",
 	)
 	sshCmd.Args = append(sshCmd.Args, sshArgs...)
 	sshCmd.Args = append(sshCmd.Args, "user@"+vm.SandboxID)

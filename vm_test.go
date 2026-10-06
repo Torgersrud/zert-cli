@@ -148,6 +148,9 @@ func TestVMKillOnExit(t *testing.T) {
 	if !strings.Contains(logged, "user@vm123") {
 		t.Fatalf("ssh destination missing: %s", logged)
 	}
+	if !strings.Contains(logged, "-o ServerAliveInterval=30") || !strings.Contains(logged, "-o ServerAliveCountMax=4") {
+		t.Fatalf("ssh keepalive options missing: %s", logged)
+	}
 	if !strings.Contains(logged, "TOKEN tok-9") {
 		t.Fatalf("token not passed via ZERT_TUNNEL_TOKEN env: %s", logged)
 	}

@@ -26,7 +26,7 @@ usage:
   zert me                        show profile, quota, pubkey
   zert ls                        list your VMs
   zert vm [--keep] [ssh args..]  create a VM and ssh into it (kill on exit)
-  zert kill <id>                 terminate a VM
+  zert kill <id>..|all           terminate VM(s) ("all", or '*' quoted)
    zert <path>                    copy a local dir/file into your vm
                                   (creates one if none is running, and
                                   sshs into it after the copy if this

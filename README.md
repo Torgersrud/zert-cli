@@ -32,6 +32,8 @@ zert vm                         # creates a VM, and instantly ssh into it
 zert ./myproject                # run a zert vm with your repo
 zert ls                         # list your VMs
 zert kill <id>                  # terminate a VM
+zert kill all                   # terminate all your VMs (or `zert kill '*'`,
+                                # quoted so the shell doesn't glob it)
 zert --version
 ```
 

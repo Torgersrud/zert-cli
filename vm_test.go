@@ -18,8 +18,9 @@ type fakeServer struct {
 	mu          sync.Mutex
 	deleted     []string
 	keyUploaded string
-	pubkey      *string  // what /v1/me reports
-	live        []string // sandbox ids reported as live by GET /v1/vm
+	pubkey      *string        // what /v1/me reports
+	live        []string       // sandbox ids reported as live by GET /v1/vm
+	deleteFail  map[string]int // id -> status code for failing DELETEs
 	create      func(w http.ResponseWriter, tries int)
 }
 
@@ -75,9 +76,15 @@ func newFakeServer(t *testing.T) *fakeServer {
 		json.NewEncoder(w).Encode(rows)
 	})
 	mux.HandleFunc("/v1/vm/", func(w http.ResponseWriter, r *http.Request) {
+		id := strings.TrimPrefix(r.URL.Path, "/v1/vm/")
 		fs.mu.Lock()
-		fs.deleted = append(fs.deleted, strings.TrimPrefix(r.URL.Path, "/v1/vm/"))
+		fs.deleted = append(fs.deleted, id)
+		code := fs.deleteFail[id]
 		fs.mu.Unlock()
+		if code != 0 {
+			http.Error(w, `{"detail":"kill refused"}`, code)
+			return
+		}
 		json.NewEncoder(w).Encode(map[string]string{"killed": "vm123"})
 	})
 	fs.Server = httptest.NewServer(mux)

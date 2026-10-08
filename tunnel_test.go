@@ -186,6 +186,53 @@ func TestTunnelCloseCodes(t *testing.T) {
 	}
 }
 
+func TestTunnelTextFrameToStderr(t *testing.T) {
+	// server notices arrive as text frames; they must never reach stdout,
+	// which is ssh's byte stream (mid-stream text = fatal stream corruption)
+	ts := stubTunnelServer(t, func(_ http.ResponseWriter, _ *http.Request, ws *websocket.Conn) {
+		ctx := context.Background()
+		ws.Write(ctx, websocket.MessageText, []byte("vm unreachable (it may have expired)"))
+		ws.Write(ctx, websocket.MessageBinary, []byte("real-ssh-bytes"))
+		ws.Close(websocket.StatusCode(4410), "")
+	})
+	defer ts.Close()
+
+	var out bytes.Buffer
+	pr, _ := io.Pipe()
+	msg := captureStderr(t, func() {
+		if err := tunnelRun(context.Background(), ts.URL, "vm1", "tok", pr, &out); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if out.String() != "real-ssh-bytes" {
+		t.Fatalf("stdout = %q, want only the binary frame", out.String())
+	}
+	if !strings.Contains(msg, "vm unreachable") {
+		t.Fatalf("stderr = %q, want the text notice", msg)
+	}
+}
+
+func TestTunnelCloseReasonPreferred(t *testing.T) {
+	ts := stubTunnelServer(t, func(_ http.ResponseWriter, _ *http.Request, ws *websocket.Conn) {
+		ws.Close(websocket.StatusCode(4410), "session limit reached")
+	})
+	defer ts.Close()
+
+	var out bytes.Buffer
+	pr, _ := io.Pipe()
+	msg := captureStderr(t, func() {
+		if err := tunnelRun(context.Background(), ts.URL, "vm1", "tok", pr, &out); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if !strings.Contains(msg, "session limit reached") {
+		t.Fatalf("stderr = %q, want the server close reason", msg)
+	}
+	if strings.Contains(msg, "vm expired") {
+		t.Fatalf("stderr = %q, want reason instead of the code-table fallback", msg)
+	}
+}
+
 func TestResolveTunnelTargetMatchingHost(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	if err := saveCredentials(&Credentials{Host: "http://127.0.0.1:9000", Token: "tok", Email: "e"}); err != nil {

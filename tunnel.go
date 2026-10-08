@@ -46,6 +46,15 @@ var closeCodeMsg = map[websocket.StatusCode]string{
 	4410: "vm expired",
 }
 
+// closeMsg prefers the server's close reason, falling back to the
+// code table for servers that close without one.
+func closeMsg(ce websocket.CloseError) string {
+	if ce.Reason != "" {
+		return ce.Reason
+	}
+	return closeCodeMsg[ce.Code]
+}
+
 const (
 	keepaliveEvery   = 25 * time.Second
 	keepaliveTimeout = 20 * time.Second
@@ -123,11 +132,11 @@ func tunnelRun(ctx context.Context, host, id, token string, in io.Reader, out io
 	}()
 	go func() {
 		for {
-			_, data, rerr := ws.Read(ctx)
+			mt, data, rerr := ws.Read(ctx)
 			if rerr != nil {
 				var ce websocket.CloseError
 				if errors.As(rerr, &ce) {
-					if msg, ok := closeCodeMsg[ce.Code]; ok {
+					if msg := closeMsg(ce); msg != "" {
 						fmt.Fprintf(os.Stderr, "zert tunnel: %s\n", msg)
 					}
 					errc <- nil
@@ -135,6 +144,12 @@ func tunnelRun(ctx context.Context, host, id, token string, in io.Reader, out io
 				}
 				errc <- rerr
 				return
+			}
+			// text frames are server notices, never ssh bytes: writing them to
+			// stdout corrupts the encrypted stream (fatal "Connection corrupted")
+			if mt == websocket.MessageText {
+				fmt.Fprintf(os.Stderr, "zert tunnel: %s\n", strings.TrimSpace(string(data)))
+				continue
 			}
 			if _, werr := out.Write(data); werr != nil {
 				errc <- werr

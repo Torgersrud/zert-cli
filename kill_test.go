@@ -51,18 +51,18 @@ func TestKillAllDeletesEveryVM(t *testing.T) {
 	}
 }
 
-func TestKillAllAcceptsQuotedStar(t *testing.T) {
+func TestKillStarIsRejected(t *testing.T) {
 	fs := newFakeServer(t)
 	setupHome(t, fs.URL)
 	fs.mu.Lock()
 	fs.live = []string{"vm1"}
 	fs.mu.Unlock()
 
-	if err := cmdKill([]string{"*"}); err != nil {
-		t.Fatal(err)
+	if err := cmdKill([]string{"*"}); err == nil {
+		t.Fatal("want error for '*', got nil")
 	}
-	if got := deletedIDs(t, fs); len(got) != 1 || got[0] != "vm1" {
-		t.Fatalf("deleted %v, want [vm1]", got)
+	if got := deletedIDs(t, fs); len(got) != 0 {
+		t.Fatalf("deleted %v, want none", got)
 	}
 }
 

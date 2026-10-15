@@ -8,9 +8,9 @@ import (
 	"os"
 )
 
-// killAll reports whether args mean "every vm" (all, or a quoted *).
+// killAll reports whether args mean "every vm" (all).
 func killAll(args []string) bool {
-	return len(args) == 1 && (args[0] == "all" || args[0] == "*")
+	return len(args) == 1 && (args[0] == "all")
 }
 
 func killIDs(a api, stderr io.Writer, ids []string) error {

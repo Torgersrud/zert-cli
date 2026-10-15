@@ -97,7 +97,7 @@ func TestUploadCreatesVMWhenNoneLive(t *testing.T) {
 	logPath := fakeSSH(t)
 	dir := tempDirNamed(t, "mydir")
 
-	if err := uploadRun(dir, strings.NewReader(""), os.Stdout, os.Stderr); err != nil {
+	if err := uploadRun(dir, nil, false, strings.NewReader(""), os.Stdout, os.Stderr); err != nil {
 		t.Fatal(err)
 	}
 	logged := readLog(t, logPath)
@@ -133,7 +133,7 @@ func TestUploadCreatedVmAutoSshes(t *testing.T) {
 	logPath := fakeSSH(t)
 	dir := tempDirNamed(t, "mydir")
 
-	if err := uploadRun(dir, strings.NewReader(""), os.Stdout, os.Stderr); err != nil {
+	if err := uploadRun(dir, nil, false, strings.NewReader(""), os.Stdout, os.Stderr); err != nil {
 		t.Fatal(err)
 	}
 	logged := readLog(t, logPath)
@@ -169,7 +169,7 @@ func TestUploadUsesLiveVM(t *testing.T) {
 	}
 	dir := tempDirNamed(t, "proj")
 
-	if err := uploadRun(dir+"/", strings.NewReader(""), os.Stdout, os.Stderr); err != nil {
+	if err := uploadRun(dir+"/", nil, false, strings.NewReader(""), os.Stdout, os.Stderr); err != nil {
 		t.Fatal(err)
 	}
 	logged := readLog(t, logPath)
@@ -178,6 +178,107 @@ func TestUploadUsesLiveVM(t *testing.T) {
 	}
 	if n := len(argLines(logged)); n != 1 {
 		t.Fatalf("must not auto-ssh when reusing a live vm, got %d ssh calls: %s", n, logged)
+	}
+}
+
+func TestUploadSSHArgsForwarded(t *testing.T) {
+	fs := newFakeServer(t)
+	setupHome(t, fs.URL)
+	logPath := fakeSSH(t)
+	dir := tempDirNamed(t, "mydir")
+
+	err := uploadRun(dir, []string{"-L", "8080:localhost:80"}, false, strings.NewReader(""), os.Stdout, os.Stderr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logged := readLog(t, logPath)
+	if !strings.Contains(logged, "-L 8080:localhost:80 user@vm123") {
+		t.Fatalf("user ssh args not forwarded before destination: %s", logged)
+	}
+	assertNoTokenInArgs(t, logged)
+	fs.mu.Lock()
+	deleted := fs.deleted
+	fs.mu.Unlock()
+	if len(deleted) != 1 || deleted[0] != "vm123" {
+		t.Fatalf("created vm must still be killed on exit, got deletes %v", deleted)
+	}
+}
+
+func TestUploadKeepSkipsDelete(t *testing.T) {
+	fs := newFakeServer(t)
+	setupHome(t, fs.URL)
+	logPath := fakeSSH(t)
+	dir := tempDirNamed(t, "mydir")
+
+	if err := uploadRun(dir, nil, true, strings.NewReader(""), os.Stdout, os.Stderr); err != nil {
+		t.Fatal(err)
+	}
+	var plain bool
+	for _, line := range argLines(readLog(t, logPath)) {
+		if !strings.Contains(line, "tar -xzf") {
+			plain = true
+		}
+	}
+	if !plain {
+		t.Fatalf("--keep must still enter the vm: %s", readLog(t, logPath))
+	}
+	fs.mu.Lock()
+	deleted := fs.deleted
+	fs.mu.Unlock()
+	if len(deleted) != 0 {
+		t.Fatalf("--keep must not DELETE, got %v", deleted)
+	}
+}
+
+func TestUploadLiveVMWithArgsEntersNoKill(t *testing.T) {
+	fs := newFakeServer(t)
+	setupHome(t, fs.URL)
+	logPath := fakeSSH(t)
+	fs.live = []string{"vmlive"}
+	fs.create = func(w http.ResponseWriter, _ int) {
+		t.Error("unexpected POST /v1/vm while a vm is live")
+		http.Error(w, `{"detail":"no"}`, 500)
+	}
+	dir := tempDirNamed(t, "proj")
+
+	err := uploadRun(dir, []string{"-L", "9000:localhost:90"}, false, strings.NewReader(""), os.Stdout, os.Stderr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logged := readLog(t, logPath)
+	if !strings.Contains(logged, "-L 9000:localhost:90 user@vmlive") {
+		t.Fatalf("ssh args not forwarded to live vm session: %s", logged)
+	}
+	if n := len(argLines(logged)); n != 2 {
+		t.Fatalf("expected exactly tar + interactive ssh, got %d: %s", n, logged)
+	}
+	fs.mu.Lock()
+	deleted := fs.deleted
+	fs.mu.Unlock()
+	if len(deleted) != 0 {
+		t.Fatalf("live vm must never be killed after entering, got %v", deleted)
+	}
+}
+
+func TestUploadLiveVMKeepEntersNoKill(t *testing.T) {
+	fs := newFakeServer(t)
+	setupHome(t, fs.URL)
+	logPath := fakeSSH(t)
+	fs.live = []string{"vmlive"}
+	dir := tempDirNamed(t, "proj")
+
+	if err := uploadRun(dir, nil, true, strings.NewReader(""), os.Stdout, os.Stderr); err != nil {
+		t.Fatal(err)
+	}
+	logged := readLog(t, logPath)
+	if n := len(argLines(logged)); n != 2 {
+		t.Fatalf("--keep alone must enter the live vm, got %d ssh calls: %s", n, logged)
+	}
+	fs.mu.Lock()
+	deleted := fs.deleted
+	fs.mu.Unlock()
+	if len(deleted) != 0 {
+		t.Fatalf("live vm must never be killed, got %v", deleted)
 	}
 }
 
@@ -198,7 +299,7 @@ func TestUploadPubkeyBootstrap(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := uploadRun(tempDirNamed(t, "d"), strings.NewReader(""), os.Stdout, os.Stderr); err != nil {
+	if err := uploadRun(tempDirNamed(t, "d"), nil, false, strings.NewReader(""), os.Stdout, os.Stderr); err != nil {
 		t.Fatal(err)
 	}
 	fs.mu.Lock()
@@ -215,7 +316,7 @@ func TestUploadSSHFailureExitCode(t *testing.T) {
 	fakeSSH(t)
 	t.Setenv("FAKE_SSH_EXIT", "1")
 
-	err := uploadRun(tempDirNamed(t, "d"), strings.NewReader(""), os.Stdout, os.Stderr)
+	err := uploadRun(tempDirNamed(t, "d"), nil, false, strings.NewReader(""), os.Stdout, os.Stderr)
 	var ee *exitError
 	if !errors.As(err, &ee) || ee.code != 1 {
 		t.Fatalf("want exit 1, got %v", err)
@@ -251,7 +352,7 @@ func TestUploadTarStreamContents(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := uploadRun(dir, strings.NewReader(""), os.Stdout, os.Stderr); err != nil {
+	if err := uploadRun(dir, nil, false, strings.NewReader(""), os.Stdout, os.Stderr); err != nil {
 		t.Fatal(err)
 	}
 	entries := untarGz(t, stdinPath)
@@ -285,7 +386,7 @@ func TestUploadSingleFile(t *testing.T) {
 	if err := os.WriteFile(path, []byte("hi"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := uploadRun(path, strings.NewReader(""), os.Stdout, os.Stderr); err != nil {
+	if err := uploadRun(path, nil, false, strings.NewReader(""), os.Stdout, os.Stderr); err != nil {
 		t.Fatal(err)
 	}
 	entries := untarGz(t, stdinPath)
@@ -297,7 +398,7 @@ func TestUploadSingleFile(t *testing.T) {
 
 func TestUploadDotNamesRefused(t *testing.T) {
 	for _, arg := range []string{".", "..", "./", "../x/.."} {
-		err := uploadRun(arg, strings.NewReader(""), os.Stdout, os.Stderr)
+		err := uploadRun(arg, nil, false, strings.NewReader(""), os.Stdout, os.Stderr)
 		if err == nil || !strings.Contains(err.Error(), "specific") {
 			t.Fatalf("%q must be refused with a clear message, got %v", arg, err)
 		}
@@ -323,7 +424,7 @@ func TestUploadMetacharNameRefused(t *testing.T) {
 	setupHome(t, fs.URL)
 	logPath := fakeSSH(t)
 
-	err := uploadRun("a;b", strings.NewReader(""), os.Stdout, os.Stderr)
+	err := uploadRun("a;b", nil, false, strings.NewReader(""), os.Stdout, os.Stderr)
 	if err == nil {
 		t.Fatal("expected error for shell metacharacter in name")
 	}
@@ -351,7 +452,7 @@ func TestUploadBadNameNoNetwork(t *testing.T) {
 	setupHome(t, ts.URL)
 	fakeSSH(t)
 
-	if err := uploadRun("a;b", strings.NewReader(""), os.Stdout, os.Stderr); err == nil {
+	if err := uploadRun("a;b", nil, false, strings.NewReader(""), os.Stdout, os.Stderr); err == nil {
 		t.Fatal("expected error for bad file name")
 	}
 	if n := atomic.LoadInt32(&hits); n != 0 {
@@ -368,7 +469,7 @@ func TestUploadRefusesRoot(t *testing.T) {
 		http.Error(w, `{"detail":"no"}`, 500)
 	}
 
-	err := uploadRun("/", strings.NewReader(""), os.Stdout, os.Stderr)
+	err := uploadRun("/", nil, false, strings.NewReader(""), os.Stdout, os.Stderr)
 	if err == nil || !strings.Contains(err.Error(), "root") {
 		t.Fatalf("expected root refusal, got %v", err)
 	}
@@ -388,7 +489,7 @@ func TestUploadRefusesHome(t *testing.T) {
 	home := setupHome(t, fs.URL)
 	logPath := fakeSSH(t)
 
-	err := uploadRun(home, strings.NewReader(""), os.Stdout, os.Stderr)
+	err := uploadRun(home, nil, false, strings.NewReader(""), os.Stdout, os.Stderr)
 	if err == nil || !strings.Contains(err.Error(), "home directory") {
 		t.Fatalf("expected home refusal, got %v", err)
 	}

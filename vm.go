@@ -117,10 +117,9 @@ func childEnv(base []string, token, host string) []string {
 	return append(out, "ZERT_TUNNEL_TOKEN="+token, "ZERT_HOST="+host)
 }
 
-// vmRun is cmdVM with injectable stdio and ssh binary (for kill-on-exit tests).
-func vmRun(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
-	keep := false
-	var sshArgs []string
+// parseSSHArgs splits CLI args into the --keep flag and the args forwarded
+// verbatim to ssh; everything after "--" is passthrough.
+func parseSSHArgs(args []string) (keep bool, sshArgs []string) {
 	passthrough := false
 	for _, a := range args {
 		if passthrough {
@@ -136,6 +135,12 @@ func vmRun(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 			sshArgs = append(sshArgs, a)
 		}
 	}
+	return keep, sshArgs
+}
+
+// vmRun is cmdVM with injectable stdio and ssh binary (for kill-on-exit tests).
+func vmRun(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+	keep, sshArgs := parseSSHArgs(args)
 
 	creds, a := requireLogin()
 	me, err := getMe(a)

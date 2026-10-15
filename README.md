@@ -32,17 +32,19 @@ zert vm                         # creates a VM, and instantly ssh into it
 zert ./myproject                # run a zert vm with your repo
 zert ls                         # list your VMs
 zert kill <id>                  # terminate a VM
-zert kill all                   # terminate all your VMs (or `zert kill '*'`,
-                                # quoted so the shell doesn't glob it)
+zert kill all                   # terminate all your VMs
 zert --version
 ```
 
 `zert ./myproject` starts a VM if none is live and drops you into an ssh
-session afterwards (killing that VM on exit); if one is already live it just
-copies into it.
+session afterwards (killing that VM on exit unless `--keep`); if one is
+already live it just copies into it.
 
-To add args for zert ssh tunnel you can pass the arguments after like this
-(e.g. `zert vm -L 8080:localhost:8080`).
+To add args for the zert ssh session, pass them after the command
+(e.g. `zert vm -L 8080:localhost:8080` or `zert ./myproject -L 8080:localhost:8080`).
+With `zert <path>`, extra ssh args (or `--keep`) also make you enter an
+already-running VM after the copy; the entered VM is only killed on exit if
+that same command created it.
 
 ## Configuration
 

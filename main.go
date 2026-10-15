@@ -26,11 +26,14 @@ usage:
   zert me                        show profile, quota, pubkey
   zert ls                        list your VMs
   zert vm [--keep] [ssh args..]  create a VM and ssh into it (kill on exit)
-  zert kill <id>..|all           terminate VM(s) ("all", or '*' quoted)
-   zert <path>                    copy a local dir/file into your vm
-                                  (creates one if none is running, and
-                                  sshs into it after the copy if this
-                                  command created it — killed on exit)
+  zert kill <id>..|all           terminate VM(s)
+  zert <path> [--keep] [ssh args..]
+                                   copy a local dir/file into your vm
+                                   (creates one if none is running, and
+                                   sshs into it after the copy — killed on
+                                   exit unless --keep, or unless the vm
+                                   already existed; extra ssh args also
+                                   enter an already-running vm)
                                   names may only use letters, digits and
                                   ._@%+=:,- — rename or archive the rest
                                   the copy is streamed as one compressed

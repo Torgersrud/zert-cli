@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -230,6 +231,98 @@ func TestTunnelCloseReasonPreferred(t *testing.T) {
 	}
 	if strings.Contains(msg, "vm expired") {
 		t.Fatalf("stderr = %q, want reason instead of the code-table fallback", msg)
+	}
+}
+
+func TestTunnelDialTimeout(t *testing.T) {
+	// blackhole listener: TCP connects but nothing ever answers, like an
+	// MTU/CGNAT stall on a phone hotspot — must fail bounded, not hang ssh
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			if _, err := ln.Accept(); err != nil {
+				return
+			}
+		}
+	}()
+
+	oldTO, oldR := dialTimeout, dialRetries
+	dialTimeout, dialRetries = 200*time.Millisecond, 0
+	defer func() { dialTimeout, dialRetries = oldTO, oldR }()
+
+	start := time.Now()
+	var out bytes.Buffer
+	pr, _ := io.Pipe()
+	err = tunnelRun(context.Background(), "http://"+ln.Addr().String(), "vm1", "tok", pr, &out)
+	if err == nil || !strings.Contains(err.Error(), "check your connection") {
+		t.Fatalf("got %v, want bounded handshake error", err)
+	}
+	if time.Since(start) > 5*time.Second {
+		t.Fatalf("dial took %v, want bounded by the handshake deadline", time.Since(start))
+	}
+}
+
+func TestTunnelDialRetriesTransientFailure(t *testing.T) {
+	var attempts int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt32(&attempts, 1) == 1 {
+			hj, ok := w.(http.Hijacker)
+			if !ok {
+				t.Error("no hijacker")
+				return
+			}
+			c, _, err := hj.Hijack() // kill the connection mid-handshake
+			if err == nil {
+				c.Close()
+			}
+			return
+		}
+		wsconn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		wsconn.Close(websocket.StatusNormalClosure, "bye")
+	}))
+	defer ts.Close()
+
+	oldTO, oldR, oldB := dialTimeout, dialRetries, dialBackoff
+	dialTimeout, dialRetries, dialBackoff = 2*time.Second, 2, 10*time.Millisecond
+	defer func() { dialTimeout, dialRetries, dialBackoff = oldTO, oldR, oldB }()
+
+	var out bytes.Buffer
+	pr, _ := io.Pipe()
+	if err := tunnelRun(context.Background(), ts.URL, "vm1", "tok", pr, &out); err != nil {
+		t.Fatal(err)
+	}
+	if got := atomic.LoadInt32(&attempts); got != 2 {
+		t.Fatalf("attempts = %d, want the handshake to be retried once", got)
+	}
+}
+
+func TestTunnelNoRetryOn401(t *testing.T) {
+	var attempts int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&attempts, 1)
+		http.Error(w, "nope", http.StatusUnauthorized)
+	}))
+	defer ts.Close()
+
+	oldTO, oldR, oldB := dialTimeout, dialRetries, dialBackoff
+	dialTimeout, dialRetries, dialBackoff = 2*time.Second, 2, 10*time.Millisecond
+	defer func() { dialTimeout, dialRetries, dialBackoff = oldTO, oldR, oldB }()
+
+	var out bytes.Buffer
+	pr, _ := io.Pipe()
+	err := tunnelRun(context.Background(), ts.URL, "vm1", "tok", pr, &out)
+	if err == nil || !strings.Contains(err.Error(), "session expired") {
+		t.Fatalf("got %v, want session expired", err)
+	}
+	if got := atomic.LoadInt32(&attempts); got != 1 {
+		t.Fatalf("attempts = %d, want no retry after an HTTP answer", got)
 	}
 }
 

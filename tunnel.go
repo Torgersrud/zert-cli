@@ -63,6 +63,57 @@ const (
 	maxFrame = 16 << 20
 )
 
+// Dial deadlines are vars so tests can shrink them. The WS handshake has no
+// built-in bound in coder/websocket and ssh's ConnectTimeout does not apply
+// to ProxyCommand children, so a stalled link (CGNAT/MTU blackholes on
+// phone hotspots) would otherwise hang ssh forever. Never set
+// http.Client.Timeout here: v1.8.15 applies it to the whole tunnel
+// lifetime, not just the handshake (dial.go cloneWithDefaults).
+var (
+	dialTimeout = 20 * time.Second
+	dialRetries = 2
+	dialBackoff = time.Second
+)
+
+// dialWS performs the tunnel handshake with a per-attempt deadline and
+// retries transient network failures; opening a relay is side-effect-free,
+// so retrying is safe (unlike POST /v1/vm). A non-101 HTTP response means
+// the server answered with intent — no retry.
+func dialWS(ctx context.Context, u, token string) (*websocket.Conn, error) {
+	opts := &websocket.DialOptions{
+		HTTPHeader: http.Header{"Authorization": {"Bearer " + token}},
+	}
+	var lastErr error
+	for attempt := 0; attempt <= dialRetries; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(dialBackoff << (attempt - 1)):
+			}
+		}
+		// the deadline covers only the handshake; the hijacked Conn
+		// returned by Dial is detached from the request ctx
+		actx, cancel := context.WithTimeout(ctx, dialTimeout)
+		ws, resp, err := websocket.Dial(actx, u, opts)
+		cancel()
+		if err == nil {
+			return ws, nil
+		}
+		if resp != nil {
+			if resp.StatusCode == http.StatusUnauthorized {
+				return nil, errors.New(closeCodeMsg[4401])
+			}
+			return nil, err
+		}
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		lastErr = err
+	}
+	return nil, fmt.Errorf("could not reach %s — check your connection: %w", u, lastErr)
+}
+
 // keepalive pings every interval on a dead-link probe schedule and reports the
 // first failure to errc: ping frames also reset idle timers on intermediaries.
 func keepalive(ctx context.Context, interval, timeout time.Duration, ping func(context.Context) error, errc chan<- error) {
@@ -93,14 +144,8 @@ func tunnelRun(ctx context.Context, host, id, token string, in io.Reader, out io
 	if err != nil {
 		return err
 	}
-	opts := &websocket.DialOptions{
-		HTTPHeader: http.Header{"Authorization": {"Bearer " + token}},
-	}
-	ws, resp, err := websocket.Dial(ctx, u, opts)
+	ws, err := dialWS(ctx, u, token)
 	if err != nil {
-		if resp != nil && resp.StatusCode == http.StatusUnauthorized {
-			return errors.New(closeCodeMsg[4401])
-		}
 		return err
 	}
 	defer ws.Close(websocket.StatusNormalClosure, "")

@@ -27,6 +27,9 @@ usage:
   zert ls                        list your VMs
   zert vm [--keep] [ssh args..]  create a VM and ssh into it (kill on exit)
   zert kill <id>..|all           terminate VM(s)
+  zert extract <vm-path> [dir]   copy a file/dir from your live vm
+                                 into [dir] (default: current dir); vm
+                                 paths resolve against the vm user's home
   zert <path> [--keep] [ssh args..]
                                    copy a local dir/file into your vm
                                    (creates one if none is running, and
@@ -64,6 +67,8 @@ func main() {
 		err = cmdVM(os.Args[2:])
 	case "kill":
 		err = cmdKill(os.Args[2:])
+	case "extract":
+		err = cmdExtract(os.Args[2:])
 	case "tunnel": // hidden: used as ssh ProxyCommand
 		err = cmdTunnel(os.Args[2:])
 	case "help", "-h", "--help":

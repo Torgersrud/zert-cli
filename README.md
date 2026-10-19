@@ -30,6 +30,7 @@ Prebuilt binaries for every platform are on the
 zert login                      
 zert vm                         # creates a VM, and instantly ssh into it 
 zert ./myproject                # run a zert vm with your repo
+zert extract ~/report.pdf       # copy a file/dir out of your live vm
 zert ls                         # list your VMs
 zert kill <id>                  # terminate a VM
 zert kill all                   # terminate all your VMs
@@ -39,6 +40,13 @@ zert --version
 `zert ./myproject` starts a VM if none is live and drops you into an ssh
 session afterwards (killing that VM on exit unless `--keep`); if one is
 already live it just copies into it.
+
+`zert extract <vm-path> [dir]` is the way back out: it copies a file or
+directory from your live VM into `[dir]` (default: the current directory).
+VM paths resolve against the VM's home directory, just like after a fresh
+ssh login. The entry is streamed back as one compressed tar, and extraction
+refuses to write anything outside the chosen destination. It never creates
+or kills a VM — start one with `zert vm` or `zert <path>` first.
 
 To add args for the zert ssh session, pass them after the command
 (e.g. `zert vm -L 8080:localhost:8080` or `zert ./myproject -L 8080:localhost:8080`).

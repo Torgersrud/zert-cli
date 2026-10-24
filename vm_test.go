@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -134,7 +135,7 @@ func readLog(t *testing.T, path string) string {
 	return string(b)
 }
 
-func TestVMKillOnExit(t *testing.T) {
+func TestVMExitNeverKills(t *testing.T) {
 	fs := newFakeServer(t)
 	setupHome(t, fs.URL)
 	logPath := fakeSSH(t)
@@ -145,8 +146,8 @@ func TestVMKillOnExit(t *testing.T) {
 	fs.mu.Lock()
 	deleted := fs.deleted
 	fs.mu.Unlock()
-	if len(deleted) != 1 || deleted[0] != "vm123" {
-		t.Fatalf("expected DELETE vm123 once, got %v", deleted)
+	if len(deleted) != 0 {
+		t.Fatalf("exit must never kill the vm, got deletes %v", deleted)
 	}
 	logged := readLog(t, logPath)
 	if !strings.Contains(logged, "ARGS -o ProxyCommand=") || !strings.Contains(logged, "tunnel vm123") {
@@ -171,19 +172,45 @@ func TestVMKillOnExit(t *testing.T) {
 	}
 }
 
-func TestVMKeepSkipsDelete(t *testing.T) {
+func TestVMKeepWarnsObsoleteAndNeverKills(t *testing.T) {
 	fs := newFakeServer(t)
 	setupHome(t, fs.URL)
 	fakeSSH(t)
+	var stderr bytes.Buffer
 
-	if err := vmRun([]string{"--keep"}, strings.NewReader(""), os.Stdout, os.Stderr); err != nil {
+	if err := vmRun([]string{"--keep"}, strings.NewReader(""), os.Stdout, &stderr); err != nil {
 		t.Fatal(err)
+	}
+	if n := strings.Count(stderr.String(), "obsolete"); n != 1 {
+		t.Fatalf("want exactly one --keep deprecation notice on stderr, got %d in %q", n, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "no longer die on exit") {
+		t.Fatalf("notice must say vms no longer die on exit, got %q", stderr.String())
 	}
 	fs.mu.Lock()
 	deleted := fs.deleted
 	fs.mu.Unlock()
 	if len(deleted) != 0 {
 		t.Fatalf("--keep must not DELETE, got %v", deleted)
+	}
+}
+
+func TestVMExitCodeNeverKills(t *testing.T) {
+	fs := newFakeServer(t)
+	setupHome(t, fs.URL)
+	fakeSSH(t)
+	t.Setenv("FAKE_SSH_EXIT", "255") // Ctrl-C / dropped link: ssh dies badly
+
+	err := vmRun(nil, strings.NewReader(""), os.Stdout, io.Discard)
+	var ee *exitError
+	if !errors.As(err, &ee) || ee.code != 255 {
+		t.Fatalf("want exit 255 propagated, got %v", err)
+	}
+	fs.mu.Lock()
+	deleted := fs.deleted
+	fs.mu.Unlock()
+	if len(deleted) != 0 {
+		t.Fatalf("ssh exit %d must never kill the vm, got deletes %v", ee.code, deleted)
 	}
 }
 

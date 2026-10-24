@@ -117,8 +117,9 @@ func childEnv(base []string, token, host string) []string {
 	return append(out, "ZERT_TUNNEL_TOKEN="+token, "ZERT_HOST="+host)
 }
 
-// parseSSHArgs splits CLI args into the --keep flag and the args forwarded
-// verbatim to ssh; everything after "--" is passthrough.
+// parseSSHArgs splits CLI args into the --keep flag (kept only to be
+// deprecated — it changes nothing) and the args forwarded verbatim to ssh;
+// everything after "--" is passthrough.
 func parseSSHArgs(args []string) (keep bool, sshArgs []string) {
 	passthrough := false
 	for _, a := range args {
@@ -138,9 +139,18 @@ func parseSSHArgs(args []string) (keep bool, sshArgs []string) {
 	return keep, sshArgs
 }
 
-// vmRun is cmdVM with injectable stdio and ssh binary (for kill-on-exit tests).
+// warnKeepDeprecated prints the one deprecation notice for the --keep flag,
+// which no longer changes anything: no entry path kills a vm on exit.
+func warnKeepDeprecated(stderr io.Writer) {
+	fmt.Fprintln(stderr, "--keep is obsolete — vms no longer die on exit")
+}
+
+// vmRun is cmdVM with injectable stdio and ssh binary (for the runner seam).
 func vmRun(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	keep, sshArgs := parseSSHArgs(args)
+	if keep {
+		warnKeepDeprecated(stderr)
+	}
 
 	creds, a := requireLogin()
 	me, err := getMe(a)
@@ -159,12 +169,13 @@ func vmRun(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	fmt.Fprintf(stderr, "vm %s ready (expires in %s)\n", vm.SandboxID,
 		time.Until(time.Unix(int64(vm.ExpiresAt), 0)).Round(time.Second))
 
-	return sshVM(creds, a, vm, sshArgs, keep, stdin, stdout, stderr)
+	return sshVM(creds, a, vm, sshArgs, stdin, stdout, stderr)
 }
 
 // sshVM opens an interactive ssh session to the vm through the tunnel,
-// forwarding signals and killing the vm on exit unless keep is set.
-func sshVM(creds *Credentials, a api, vm *vmRow, sshArgs []string, keep bool, stdin io.Reader, stdout, stderr io.Writer) error {
+// forwarding signals. When the session ends — whatever the reason — the vm
+// keeps running: only `zert kill` or an expired Idle window ever ends it.
+func sshVM(creds *Credentials, a api, vm *vmRow, sshArgs []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	self, err := os.Executable()
 	if err != nil {
 		self = "zert"
@@ -196,14 +207,6 @@ func sshVM(creds *Credentials, a api, vm *vmRow, sshArgs []string, keep bool, st
 	case sig := <-sigc:
 		_ = sshCmd.Process.Signal(sig)
 		waitErr = <-done
-	}
-
-	if !keep {
-		fmt.Fprintln(stderr, "killing vm "+vm.SandboxID+" …")
-		resp, data, err := a.do("DELETE", vmPath(vm.SandboxID), nil)
-		if err != nil || resp.StatusCode != http.StatusOK {
-			fmt.Fprintf(stderr, "zert: kill failed: %v %s\n", err, detail(data))
-		}
 	}
 
 	var ee *exec.ExitError

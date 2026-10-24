@@ -421,6 +421,14 @@ func TestVMQuota409ShowsList(t *testing.T) {
 	if !strings.Contains(hint, "zert kill <id>") {
 		t.Fatalf("quota-409 hint must still offer zert kill, got %q", hint)
 	}
+	// the product glossary bans "re-" coinages for Attach (nothing is being
+	// re- — the vm never left), so the hint must use attacher wording
+	if strings.Contains(hint, "re-enter") {
+		t.Fatalf("quota-409 hint uses a banned re- word, got %q", hint)
+	}
+	if !strings.Contains(hint, "attaches to a live vm") {
+		t.Fatalf("quota-409 hint must say attach attaches to a live vm, got %q", hint)
+	}
 }
 
 func countPrefix(entries []string, prefix string) []string {

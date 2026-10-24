@@ -24,29 +24,30 @@ usage:
                                  authenticate and store credentials
   zert logout                    delete stored credentials
   zert me                        show profile, quota, pubkey
-  zert ls                        list your VMs
+  zert ls                        list your VMs and their time left
   zert vm [ssh args..]           create a VM and ssh into it — leaving the
                                  session never kills the VM; only zert kill
-                                 or the VM's expiry ends it
+                                 or an expired Idle window ends it
   zert attach [id] [ssh args..]
-                                 re-enter a running VM (with one live VM the
-                                 id is optional, with several it is required,
-                                 with none it says so); leaving this session
-                                 never kills the VM either
+                                 attach to a running VM — the same shell
+                                 comes back (with one live VM the id is
+                                 optional, with several it is required,
+                                 with none it says so); leaving this
+                                 session never kills the VM either
   zert kill <id>..|all           terminate VM(s)
   zert extract <vm-path> [dir]   copy a file/dir from your live vm
                                  into [dir] (default: current dir); vm
                                  paths resolve against the vm user's home
   zert <path> [ssh args..]
-                                   copy a local dir/file into your vm
-                                   (creates one if none is running, and
-                                   sshs into it after the copy; the vm
-                                   stays up when you leave — extra ssh
-                                   args also enter an already-running vm)
-                                  names may only use letters, digits and
-                                  ._@%+=:,- — rename or archive the rest
-                                  the copy is streamed as one compressed
-                                  tar; symlinks are followed
+                                 copy a local dir/file into your vm
+                                 (creates one if none is running, and
+                                 sshs into it after the copy; the vm
+                                 stays up when you leave — extra ssh
+                                 args also enter an already-running vm);
+                                 names may only use letters, digits and
+                                 ._@%+=:,- — rename or archive the rest;
+                                 the copy is streamed as one compressed
+                                 tar, symlinks are followed
 
 host: --host flag > $ZERT_HOST > stored credentials
       (tunnel: $ZERT_HOST must match your logged-in host unless

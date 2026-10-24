@@ -197,12 +197,8 @@ func humanBytes(n int64) string {
 // stream (compression happens client-side, before the encrypted tunnel).
 // sshArgs comes from parseSSHArgs and applies to the interactive session
 // entered after the copy — always when this call created the vm, and also
-// for a pre-existing live vm when the user passed extra args. keep is the
-// deprecated --keep flag: it warns and changes nothing.
-func uploadRun(arg string, sshArgs []string, keep bool, stdin io.Reader, stdout, stderr io.Writer) error {
-	if keep {
-		warnKeepDeprecated(stderr)
-	}
+// for a pre-existing live vm when the user passed extra args.
+func uploadRun(arg string, sshArgs []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	src := expandTilde(arg)
 	trimmed := strings.TrimRight(src, "/")
 	base := filepath.Base(trimmed)
@@ -328,6 +324,6 @@ func cmdUpload(args []string) error {
 	if len(args) < 1 {
 		return errors.New("usage: zert <path> [ssh args..]")
 	}
-	keep, sshArgs := parseSSHArgs(args[1:])
-	return uploadRun(args[0], sshArgs, keep, os.Stdin, os.Stdout, os.Stderr)
+	sshArgs := parseSSHArgs(os.Stderr, args[1:])
+	return uploadRun(args[0], sshArgs, os.Stdin, os.Stdout, os.Stderr)
 }

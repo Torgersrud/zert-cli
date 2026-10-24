@@ -120,11 +120,13 @@ func childEnv(base []string, token, host string) []string {
 	return append(out, "ZERT_TUNNEL_TOKEN="+token, "ZERT_HOST="+host)
 }
 
-// parseSSHArgs splits CLI args into the --keep flag (kept only to be
-// deprecated — it changes nothing) and the args forwarded verbatim to ssh;
-// everything after "--" is passthrough.
-func parseSSHArgs(args []string) (keep bool, sshArgs []string) {
+// parseSSHArgs returns the args forwarded verbatim to ssh — everything
+// after "--" is passthrough — and swallows the deprecated --keep flag:
+// when it was given, this one place prints its deprecation notice, so
+// every entry path (vm, attach, upload) warns exactly once.
+func parseSSHArgs(stderr io.Writer, args []string) (sshArgs []string) {
 	passthrough := false
+	keep := false
 	for _, a := range args {
 		if passthrough {
 			sshArgs = append(sshArgs, a)
@@ -139,7 +141,10 @@ func parseSSHArgs(args []string) (keep bool, sshArgs []string) {
 			sshArgs = append(sshArgs, a)
 		}
 	}
-	return keep, sshArgs
+	if keep {
+		warnKeepDeprecated(stderr)
+	}
+	return sshArgs
 }
 
 // warnKeepDeprecated prints the one deprecation notice for the --keep flag,
@@ -161,10 +166,7 @@ var stdinIsInteractive = defaultStdinIsInteractive
 
 // vmRun is cmdVM with injectable stdio and ssh binary (for the runner seam).
 func vmRun(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
-	keep, sshArgs := parseSSHArgs(args)
-	if keep {
-		warnKeepDeprecated(stderr)
-	}
+	sshArgs := parseSSHArgs(stderr, args)
 
 	creds, a := requireLogin()
 	me, err := getMe(a)
@@ -201,8 +203,6 @@ func hasUserRemoteCommand(sshArgs []string) bool {
 	for i := 0; i < len(sshArgs); i++ {
 		a := sshArgs[i]
 		switch {
-		case a == "--": // ssh's own end-of-options marker
-			return i+1 < len(sshArgs)
 		case strings.HasPrefix(a, "-") && a != "-":
 			if len(a) == 2 && strings.ContainsRune(sshOptsWithArg, rune(a[1])) {
 				i++ // this option's value is the next token

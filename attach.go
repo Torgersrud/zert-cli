@@ -22,10 +22,7 @@ func attachRun(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		return errors.New("invalid vm id") // same guard as kill and tunnel
 	}
 	// same arg rules as zert vm: --keep only warns, the rest reaches ssh verbatim
-	keep, sshArgs := parseSSHArgs(rest)
-	if keep {
-		warnKeepDeprecated(stderr)
-	}
+	sshArgs := parseSSHArgs(stderr, rest)
 	creds, a := requireLogin()
 	rows, err := listVMs(a)
 	if err != nil {

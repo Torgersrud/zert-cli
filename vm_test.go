@@ -223,7 +223,9 @@ func TestVMExitCodeNeverKills(t *testing.T) {
 // tmuxWrapCmd is the remote command every interactive entry runs, pinned
 // verbatim: enter/attach the one tmux session "zert" when the guest has
 // tmux, plain login shell when it does not (a vm from the pre-tmux
-// Template). It is the contract, so the test owns the literal.
+// Template). It is the contract, so the test owns the literal — and the
+// literal is a deliberate byte-for-byte duplicate of vm.go's
+// interactiveRemoteCmd: if you change one, edit both literals together.
 const tmuxWrapCmd = `command -v tmux >/dev/null 2>&1 && exec tmux new -As zert || exec "${SHELL:-sh}" -l`
 
 // fakeTTY makes stdinIsInteractive report a terminal — a test binary's

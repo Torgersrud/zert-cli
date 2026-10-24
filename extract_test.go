@@ -148,6 +148,10 @@ func TestExtractHappyPath(t *testing.T) {
 		t.Fatalf("token not passed via ZERT_TUNNEL_TOKEN env: %s", logged)
 	}
 	assertNoTokenInArgs(t, logged)
+	// extract is a non-interactive stream: it never lands in tmux
+	if strings.Contains(logged, "tmux") {
+		t.Fatalf("tmux leaked into the extract ssh argv: %s", logged)
+	}
 	if n := len(argLines(logged)); n != 1 {
 		t.Fatalf("extract must spawn exactly one ssh, got %d: %s", n, logged)
 	}

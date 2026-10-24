@@ -8,6 +8,29 @@ import (
 	"testing"
 )
 
+func TestAttachRunsInsideTmuxSession(t *testing.T) {
+	fs := newFakeServer(t)
+	fs.live = []string{"vma"}
+	setupHome(t, fs.URL)
+	logPath := fakeSSH(t)
+
+	if err := attachRun(nil, strings.NewReader(""), os.Stdout, os.Stderr); err != nil {
+		t.Fatal(err)
+	}
+	line := argLines(readLog(t, logPath))[0]
+	// Attach enters the same named session every interactive entry uses —
+	// that is what makes a second Attach a mirror and a Detach restorable
+	if !strings.Contains(line, "-t user@vma "+tmuxWrapCmd) {
+		t.Fatalf("attach did not enter the tmux session: %s", line)
+	}
+	fs.mu.Lock()
+	deleted := fs.deleted
+	fs.mu.Unlock()
+	if len(deleted) != 0 {
+		t.Fatalf("tmux detach must park the vm, not delete it, got %v", deleted)
+	}
+}
+
 func TestAttachExpiredVMExplainsItself(t *testing.T) {
 	fs := newFakeServer(t)
 	fs.live = []string{"vma"}

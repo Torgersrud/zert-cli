@@ -158,6 +158,27 @@ func TestUploadCreatedVmAutoSshes(t *testing.T) {
 	}
 }
 
+func TestUploadEntryRunsTmuxCopyStreamNever(t *testing.T) {
+	fs := newFakeServer(t)
+	setupHome(t, fs.URL)
+	logPath := fakeSSH(t)
+	dir := tempDirNamed(t, "mydir")
+
+	if err := uploadRun(dir, nil, false, strings.NewReader(""), os.Stdout, os.Stderr); err != nil {
+		t.Fatal(err)
+	}
+	lines := argLines(readLog(t, logPath))
+	if len(lines) != 2 {
+		t.Fatalf("want tar + interactive ssh, got %d lines: %v", len(lines), lines)
+	}
+	if strings.Contains(lines[0], "tmux") || !strings.Contains(lines[0], uploadRemoteCmd) {
+		t.Fatalf("the copy stream must never see tmux: %s", lines[0])
+	}
+	if !strings.Contains(lines[1], "user@vm123 "+tmuxWrapCmd) {
+		t.Fatalf("the post-copy entry must run inside the tmux session: %s", lines[1])
+	}
+}
+
 func TestUploadUsesLiveVM(t *testing.T) {
 	fs := newFakeServer(t)
 	setupHome(t, fs.URL)

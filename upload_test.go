@@ -122,8 +122,8 @@ func TestUploadCreatesVMWhenNoneLive(t *testing.T) {
 	fs.mu.Lock()
 	deleted := fs.deleted
 	fs.mu.Unlock()
-	if len(deleted) != 1 || deleted[0] != "vm123" {
-		t.Fatalf("created vm must be killed on exit, got deletes %v", deleted)
+	if len(deleted) != 0 {
+		t.Fatalf("exit must never kill the vm, got deletes %v", deleted)
 	}
 }
 
@@ -153,8 +153,8 @@ func TestUploadCreatedVmAutoSshes(t *testing.T) {
 	fs.mu.Lock()
 	deleted := fs.deleted
 	fs.mu.Unlock()
-	if len(deleted) != 1 || deleted[0] != "vm123" {
-		t.Fatalf("created vm must be killed after auto-ssh exit, got deletes %v", deleted)
+	if len(deleted) != 0 {
+		t.Fatalf("exit after auto-ssh must never kill the vm, got deletes %v", deleted)
 	}
 }
 
@@ -199,19 +199,26 @@ func TestUploadSSHArgsForwarded(t *testing.T) {
 	fs.mu.Lock()
 	deleted := fs.deleted
 	fs.mu.Unlock()
-	if len(deleted) != 1 || deleted[0] != "vm123" {
-		t.Fatalf("created vm must still be killed on exit, got deletes %v", deleted)
+	if len(deleted) != 0 {
+		t.Fatalf("exit must never kill the vm, got deletes %v", deleted)
 	}
 }
 
-func TestUploadKeepSkipsDelete(t *testing.T) {
+func TestUploadKeepWarnsObsoleteAndNeverKills(t *testing.T) {
 	fs := newFakeServer(t)
 	setupHome(t, fs.URL)
 	logPath := fakeSSH(t)
 	dir := tempDirNamed(t, "mydir")
+	var stderr bytes.Buffer
 
-	if err := uploadRun(dir, nil, true, strings.NewReader(""), os.Stdout, os.Stderr); err != nil {
+	if err := uploadRun(dir, nil, true, strings.NewReader(""), os.Stdout, &stderr); err != nil {
 		t.Fatal(err)
+	}
+	if n := strings.Count(stderr.String(), "obsolete"); n != 1 {
+		t.Fatalf("want exactly one --keep deprecation notice on stderr, got %d in %q", n, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "no longer die on exit") {
+		t.Fatalf("notice must say vms no longer die on exit, got %q", stderr.String())
 	}
 	var plain bool
 	for _, line := range argLines(readLog(t, logPath)) {
@@ -260,19 +267,25 @@ func TestUploadLiveVMWithArgsEntersNoKill(t *testing.T) {
 	}
 }
 
-func TestUploadLiveVMKeepEntersNoKill(t *testing.T) {
+func TestUploadLiveVMKeepChangesNothing(t *testing.T) {
 	fs := newFakeServer(t)
 	setupHome(t, fs.URL)
 	logPath := fakeSSH(t)
 	fs.live = []string{"vmlive"}
 	dir := tempDirNamed(t, "proj")
+	var stderr bytes.Buffer
 
-	if err := uploadRun(dir, nil, true, strings.NewReader(""), os.Stdout, os.Stderr); err != nil {
+	if err := uploadRun(dir, nil, true, strings.NewReader(""), os.Stdout, &stderr); err != nil {
 		t.Fatal(err)
 	}
+	// --keep changes nothing: a pre-existing live vm behaves exactly like
+	// the no-flag case — copy only, no interactive entry.
 	logged := readLog(t, logPath)
-	if n := len(argLines(logged)); n != 2 {
-		t.Fatalf("--keep alone must enter the live vm, got %d ssh calls: %s", n, logged)
+	if n := len(argLines(logged)); n != 1 {
+		t.Fatalf("--keep must not enter an already-running vm, got %d ssh calls: %s", n, logged)
+	}
+	if n := strings.Count(stderr.String(), "obsolete"); n != 1 {
+		t.Fatalf("want exactly one --keep deprecation notice on stderr, got %d in %q", n, stderr.String())
 	}
 	fs.mu.Lock()
 	deleted := fs.deleted
@@ -320,6 +333,12 @@ func TestUploadSSHFailureExitCode(t *testing.T) {
 	var ee *exitError
 	if !errors.As(err, &ee) || ee.code != 1 {
 		t.Fatalf("want exit 1, got %v", err)
+	}
+	fs.mu.Lock()
+	deleted := fs.deleted
+	fs.mu.Unlock()
+	if len(deleted) != 0 {
+		t.Fatalf("failed ssh must never kill the vm, got deletes %v", deleted)
 	}
 }
 

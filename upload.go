@@ -195,10 +195,14 @@ func humanBytes(n int64) string {
 // streamed as a tar.gz through a single ssh exec (`tar -xzf - -C ~`), which
 // avoids scp's per-file round trips and compresses the whole tree as one
 // stream (compression happens client-side, before the encrypted tunnel).
-// sshArgs/keep come from parseSSHArgs: they apply to the interactive session
+// sshArgs comes from parseSSHArgs and applies to the interactive session
 // entered after the copy — always when this call created the vm, and also
-// for a pre-existing live vm when the user passed extra args.
+// for a pre-existing live vm when the user passed extra args. keep is the
+// deprecated --keep flag: it warns and changes nothing.
 func uploadRun(arg string, sshArgs []string, keep bool, stdin io.Reader, stdout, stderr io.Writer) error {
+	if keep {
+		warnKeepDeprecated(stderr)
+	}
 	src := expandTilde(arg)
 	trimmed := strings.TrimRight(src, "/")
 	base := filepath.Base(trimmed)
@@ -311,21 +315,18 @@ func uploadRun(arg string, sshArgs []string, keep bool, stdin io.Reader, stdout,
 	}
 	fmt.Fprintf(stderr, "uploaded %s (%s → %s compressed)\n", abs, humanBytes(raw), humanBytes(packed))
 
-	if created || len(sshArgs) > 0 || keep {
-		if created && !keep {
-			fmt.Fprintf(stderr, "entering vm %s (killed on exit) …\n", vm.SandboxID)
-		} else {
-			fmt.Fprintf(stderr, "entering vm %s …\n", vm.SandboxID)
-		}
-		// a vm we didn't create is never killed on exit (sshVM keep=true)
-		return sshVM(creds, a, vm, sshArgs, !created || keep, stdin, stdout, stderr)
+	// leaving the entered vm never kills it: only `zert kill` or its expiry
+	// ends a vm — and --keep no longer decides anything either.
+	if created || len(sshArgs) > 0 {
+		fmt.Fprintf(stderr, "entering vm %s …\n", vm.SandboxID)
+		return sshVM(creds, a, vm, sshArgs, stdin, stdout, stderr)
 	}
 	return nil
 }
 
 func cmdUpload(args []string) error {
 	if len(args) < 1 {
-		return errors.New("usage: zert <path> [--keep] [ssh args..]")
+		return errors.New("usage: zert <path> [ssh args..]")
 	}
 	keep, sshArgs := parseSSHArgs(args[1:])
 	return uploadRun(args[0], sshArgs, keep, os.Stdin, os.Stdout, os.Stderr)

@@ -28,6 +28,11 @@ usage:
   zert vm [ssh args..]           create a VM and ssh into it — leaving the
                                  session never kills the VM; only zert kill
                                  or the VM's expiry ends it
+  zert attach [id] [ssh args..]
+                                 re-enter a running VM (with one live VM the
+                                 id is optional, with several it is required,
+                                 with none it says so); leaving this session
+                                 never kills the VM either
   zert kill <id>..|all           terminate VM(s)
   zert extract <vm-path> [dir]   copy a file/dir from your live vm
                                  into [dir] (default: current dir); vm
@@ -66,6 +71,8 @@ func main() {
 		err = cmdLS(os.Args[2:])
 	case "vm":
 		err = cmdVM(os.Args[2:])
+	case "attach":
+		err = cmdAttach(os.Args[2:])
 	case "kill":
 		err = cmdKill(os.Args[2:])
 	case "extract":

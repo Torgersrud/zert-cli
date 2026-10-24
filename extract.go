@@ -179,7 +179,7 @@ func extractRun(vmPathArg, dest string, stdout, stderr io.Writer) error {
 
 	vm := pickLiveVM(rows)
 	if vm == nil {
-		return errors.New("no live vm — start one with `zert vm` or `zert <path>` first")
+		return errNoLiveVM
 	}
 
 	if dest == "" {

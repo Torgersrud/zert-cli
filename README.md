@@ -31,6 +31,7 @@ Prebuilt binaries for every platform are on the
 ```sh
 zert login                      
 zert vm                         # creates a VM, and instantly ssh into it 
+zert attach                     # back into a running VM (id optional)
 zert ./myproject                # run a zert vm with your repo
 zert extract ~/report.pdf       # copy a file/dir out of your live vm
 zert ls                         # list your VMs
@@ -42,6 +43,12 @@ zert --version
 `zert ./myproject` starts a VM if none is live and drops you into an ssh
 session afterwards; when you leave, that VM keeps running. If one is
 already live it just copies into it.
+
+`zert attach [id]` is how you come back to a VM that is still running: with
+exactly one live VM the id is optional, with several you have to name one
+(`zert ls` lists them), and with none it tells you to start one. Leaving an
+attached session never kills the VM either — only `zert kill` or the VM's own
+expiry ends it.
 
 `zert extract <vm-path> [dir]` is the way back out: it copies a file or
 directory from your live VM into `[dir]` (default: the current directory).

@@ -71,12 +71,33 @@ func resolveAttachTarget(rows []vmRow, id string) (*vmRow, error) {
 	}
 }
 
-// splitAttachArgs takes the optional vm id off the front of the args (ids
-// never start with "-", ssh args always do); the rest is forwarded to ssh
-// verbatim.
+// splitAttachArgs takes the vm id off the args, wherever it was placed.
+// A leading bare token is the id position — valid or not, so attachRun
+// answers a malformed id with "invalid vm id". Otherwise the args are read
+// the way ssh itself reads them (the sshOptsWithArg table shared with
+// hasUserRemoteCommand): the first token that is neither an option nor an
+// option's value is the id candidate, removed and returned when it
+// validates as a vm id. A bare token that is not a vm id stays exactly
+// where ssh reads it — the remote command — and nothing past ssh's "--"
+// is ever the id.
 func splitAttachArgs(args []string) (id string, sshArgs []string) {
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		return args[0], args[1:]
+	}
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--": // end of options: command territory from here on
+			return "", args
+		case strings.HasPrefix(a, "-") && a != "-":
+			if len(a) == 2 && strings.ContainsRune(sshOptsWithArg, rune(a[1])) {
+				i++ // this option's value is the next token, not a bare one
+			}
+		case validSandboxID(a):
+			return a, append(args[:i:i], args[i+1:]...)
+		default:
+			return "", args // not a vm id: leave it as the remote command
+		}
 	}
 	return "", args
 }

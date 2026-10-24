@@ -220,6 +220,33 @@ func TestVMExitCodeNeverKills(t *testing.T) {
 	}
 }
 
+// tmuxWrapCmd is the remote command every interactive entry runs, pinned
+// verbatim: enter/attach the one tmux session "zert" when the guest has
+// tmux, plain login shell when it does not (a vm from the pre-tmux
+// Template). It is the contract, so the test owns the literal.
+const tmuxWrapCmd = `command -v tmux >/dev/null 2>&1 && exec tmux new -As zert || exec "${SHELL:-sh}" -l`
+
+func TestVMInteractiveEntryRunsTmuxWrap(t *testing.T) {
+	fs := newFakeServer(t)
+	setupHome(t, fs.URL)
+	logPath := fakeSSH(t)
+
+	if err := vmRun(nil, strings.NewReader(""), os.Stdout, os.Stderr); err != nil {
+		t.Fatal(err)
+	}
+	lines := argLines(readLog(t, logPath))
+	if len(lines) != 1 {
+		t.Fatalf("want exactly one ssh call, got %d", len(lines))
+	}
+	line := lines[0]
+	// the wrap is the remote command — it follows the destination — and it
+	// comes with -t, because ssh only gives an explicit command a tty once
+	// a command is present, and tmux needs one
+	if !strings.Contains(line, "-t user@vm123 "+tmuxWrapCmd) || !strings.HasSuffix(line, tmuxWrapCmd) {
+		t.Fatalf("tmux wrap not the remote command of the interactive ssh: %s", line)
+	}
+}
+
 func TestVMSSHArgsForwarded(t *testing.T) {
 	fs := newFakeServer(t)
 	setupHome(t, fs.URL)
@@ -233,6 +260,41 @@ func TestVMSSHArgsForwarded(t *testing.T) {
 	if !strings.Contains(logged, "ARGS -o ProxyCommand=") ||
 		!strings.Contains(logged, "-L 8080:localhost:80 user@vm123") {
 		t.Fatalf("user ssh args not forwarded before destination: %s", logged)
+	}
+}
+
+func TestVMUserRemoteCommandStaysUnwrapped(t *testing.T) {
+	fs := newFakeServer(t)
+	setupHome(t, fs.URL)
+	logPath := fakeSSH(t)
+
+	err := vmRun([]string{"--", "uptime"}, strings.NewReader(""), os.Stdout, os.Stderr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := argLines(readLog(t, logPath))[0]
+	// a user-supplied remote command is passed through exactly as today:
+	// verbatim in the args, and nothing — no tmux wrap — after the
+	// destination
+	if strings.Contains(line, "tmux") || !strings.HasSuffix(line, "uptime user@vm123") {
+		t.Fatalf("user remote command was wrapped: %s", line)
+	}
+}
+
+func TestVMSSHOptionArgsStillWrap(t *testing.T) {
+	fs := newFakeServer(t)
+	setupHome(t, fs.URL)
+	logPath := fakeSSH(t)
+
+	err := vmRun([]string{"-L", "8080:localhost:80"}, strings.NewReader(""), os.Stdout, os.Stderr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := argLines(readLog(t, logPath))[0]
+	// an option's value is not a remote command: port forwarding with no
+	// command still lands in the tmux session
+	if !strings.Contains(line, "-L 8080:localhost:80 user@vm123 "+tmuxWrapCmd) {
+		t.Fatalf("option-only ssh args lost the tmux wrap: %s", line)
 	}
 }
 

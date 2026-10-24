@@ -173,14 +173,56 @@ func vmRun(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	return sshVM(creds, a, vm, sshArgs, stdin, stdout, stderr)
 }
 
+// sshOptsWithArg lists the ssh(1) option letters whose value is taken as a
+// separate argument (-b -c -D -E -e -F -I -i -J -l -L -m -O -o -p -Q -R -S
+// -w): such a value is not positional and never starts a remote command.
+const sshOptsWithArg = "bcDEeFIiJlLmOopQRSw"
+
+// hasUserRemoteCommand reports whether the forwarded ssh args contain the
+// start of a user-supplied remote command: the first token ssh would read
+// as neither an option nor an option's value. Unknown option letters count
+// as plain flags, so a following bare token lands on the command side —
+// erring that way leaves the argv exactly as today (unwrapped), the safe
+// reading of "passed through".
+func hasUserRemoteCommand(sshArgs []string) bool {
+	for i := 0; i < len(sshArgs); i++ {
+		a := sshArgs[i]
+		switch {
+		case a == "--": // ssh's own end-of-options marker
+			return i+1 < len(sshArgs)
+		case strings.HasPrefix(a, "-") && a != "-":
+			if len(a) == 2 && strings.ContainsRune(sshOptsWithArg, rune(a[1])) {
+				i++ // this option's value is the next token
+			}
+		default:
+			return true
+		}
+	}
+	return false
+}
+
+// interactiveRemoteCmd is the remote command an interactive entry runs in
+// place of a bare login shell: it enters — creating when missing — the one
+// tmux session "zert", so a Detach (detach key, dropped link, dead laptop)
+// only drops the viewer and the next Attach restores the same shell. When
+// the guest has no tmux (a vm from the pre-tmux Template) the guard falls
+// back to a plain login shell, exactly what an unwrapped entry gets.
+const interactiveRemoteCmd = `command -v tmux >/dev/null 2>&1 && exec tmux new -As zert || exec "${SHELL:-sh}" -l`
+
 // sshVM opens an interactive ssh session to the vm through the tunnel,
-// forwarding signals. When the session ends — whatever the reason — the vm
-// keeps running: only `zert kill` or an expired Idle window ever ends it.
+// forwarding signals, with the guest login living inside the tmux session
+// "zert" so any Detach restores the same shell on the next entry. When the
+// session ends — whatever the reason — the vm keeps running: only `zert
+// kill` or an expired Idle window ever ends it.
 func sshVM(creds *Credentials, a api, vm *vmRow, sshArgs []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	self, err := os.Executable()
 	if err != nil {
 		self = "zert"
 	}
+	// the wrap is the remote command only when the user did not supply one
+	// of their own — their args then reach ssh verbatim, unwrapped, exactly
+	// as before tmux
+	wrapped := !hasUserRemoteCommand(sshArgs)
 	sshCmd := exec.Command(sshPath)
 	sshCmd.Args = append(sshCmd.Args,
 		"-o", proxyCommand(self, vm.SandboxID),
@@ -188,8 +230,16 @@ func sshVM(creds *Credentials, a api, vm *vmRow, sshArgs []string, stdin io.Read
 		"-o", "ServerAliveInterval=30",
 		"-o", "ServerAliveCountMax=4",
 	)
+	if wrapped {
+		// ssh only gives an explicit remote command a tty on request,
+		// and tmux needs one
+		sshCmd.Args = append(sshCmd.Args, "-t")
+	}
 	sshCmd.Args = append(sshCmd.Args, sshArgs...)
 	sshCmd.Args = append(sshCmd.Args, "user@"+vm.SandboxID)
+	if wrapped {
+		sshCmd.Args = append(sshCmd.Args, interactiveRemoteCmd)
+	}
 	sshCmd.Stdin, sshCmd.Stdout, sshCmd.Stderr = stdin, stdout, stderr
 	// the tunnel child gets the token via environment, never argv
 	sshCmd.Env = childEnv(os.Environ(), creds.Token, creds.Host)

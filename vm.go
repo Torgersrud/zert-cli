@@ -86,7 +86,8 @@ func createVM(a api) (*vmRow, error) {
 		if rows, err := listVMs(a); err == nil {
 			printVMs(rows)
 		}
-		fmt.Fprintln(os.Stderr, "hint: zert kill <id> (or zert kill all)")
+		fmt.Fprintln(os.Stderr, "hint: zert attach <id> re-enters a live vm; "+
+			"zert kill <id> (or zert kill all) frees a slot")
 		return nil, &exitError{1, errors.New("quota reached")}
 	default:
 		return nil, mapped(resp, data)

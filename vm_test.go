@@ -21,6 +21,7 @@ type fakeServer struct {
 	keyUploaded string
 	pubkey      *string        // what /v1/me reports
 	live        []string       // sandbox ids reported as live by GET /v1/vm
+	expired     []string       // sandbox ids reported as not live by GET /v1/vm
 	deleteFail  map[string]int // id -> status code for failing DELETEs
 	create      func(w http.ResponseWriter, tries int)
 }
@@ -68,6 +69,11 @@ func newFakeServer(t *testing.T) *fakeServer {
 		for _, id := range fs.live {
 			rows = append(rows, map[string]any{
 				"sandbox_id": id, "expires_at": 9999999999.0, "live": true,
+			})
+		}
+		for _, id := range fs.expired {
+			rows = append(rows, map[string]any{
+				"sandbox_id": id, "expires_at": 1.0, "live": false,
 			})
 		}
 		fs.mu.Unlock()
@@ -335,13 +341,23 @@ func TestVMQuota409ShowsList(t *testing.T) {
 		http.Error(w, `{"detail":"quota reached (1 live VM)"}`, 409)
 	}
 
-	err := vmRun(nil, strings.NewReader(""), os.Stdout, os.Stderr)
+	// the quota listing and its hint print straight to os.Stderr
+	var err error
+	hint := captureStderr(t, func() {
+		err = vmRun(nil, strings.NewReader(""), os.Stdout, os.Stderr)
+	})
 	var ee *exitError
 	if !errors.As(err, &ee) || ee.code != 1 {
 		t.Fatalf("want exit 1, got %v", err)
 	}
 	if err == nil || !strings.Contains(err.Error(), "quota reached") {
 		t.Fatalf("want quota-reached error, got %v", err)
+	}
+	if !strings.Contains(hint, "zert attach <id>") {
+		t.Fatalf("quota-409 hint must offer zert attach, got %q", hint)
+	}
+	if !strings.Contains(hint, "zert kill <id>") {
+		t.Fatalf("quota-409 hint must still offer zert kill, got %q", hint)
 	}
 }
 

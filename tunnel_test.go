@@ -167,7 +167,7 @@ func TestTunnelCloseCodes(t *testing.T) {
 	}{
 		{4401, "session expired"},
 		{4403, "no such vm"},
-		{4410, "vm expired"},
+		{4410, "vm expired — start a new one"},
 	} {
 		code := tc.code
 		ts := stubTunnelServer(t, func(_ http.ResponseWriter, _ *http.Request, ws *websocket.Conn) {

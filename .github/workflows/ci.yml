@@ -10,6 +10,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Large files
+        run: |
+          big=$(git ls-files -z | xargs -0 stat -c '%s %n' | sort -rn | awk '$1 > 1048576')
+          if [ -n "$big" ]; then
+            echo "tracked files over 1 MiB (binaries belong in releases, not git):"; echo "$big"; exit 1
+          fi
+
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod

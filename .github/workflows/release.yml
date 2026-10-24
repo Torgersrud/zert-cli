@@ -58,4 +58,7 @@ jobs:
             exit 0
           fi
           git clone --depth 1 "https://x-access-token:${TAP_TOKEN}@github.com/Torgersrud/homebrew-zert.git" /tmp/homebrew-zert
+          # the runner has no git identity; the bump script commits, so give it the bot
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
           ./scripts/bump-homebrew.sh "$TAG" /tmp/homebrew-zert

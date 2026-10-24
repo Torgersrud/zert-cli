@@ -115,7 +115,9 @@ func extractTarGz(dir string, r io.Reader) (files int, raw int64, err error) {
 		}
 		switch h.Typeflag {
 		case tar.TypeDir:
-			if err := os.MkdirAll(target, 0755); err != nil {
+			// #nosec G703 -- target is h.Name guarded above: absolute paths and
+			// ".." refused, plus the explicit containment check after the Join
+			if err := os.MkdirAll(target, 0750); err != nil {
 				return files, raw, err
 			}
 		case tar.TypeReg:
@@ -123,13 +125,19 @@ func extractTarGz(dir string, r io.Reader) (files int, raw int64, err error) {
 			if mode == 0 {
 				mode = 0644
 			}
-			if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+			// #nosec G703 -- parent of the contained target, guarded above
+			if err := os.MkdirAll(filepath.Dir(target), 0750); err != nil {
 				return files, raw, err
 			}
+			// #nosec G703 G304 -- target is contained in dir (guarded above); the
+			// archive comes from the user's own vm at their own request
 			f, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
 			if err != nil {
 				return files, raw, err
 			}
+			// #nosec G110 -- the stream is the user's own vm, tarred at their
+			// request; bytes are counted and reported, a cap would break
+			// legitimate large extractions
 			n, cerr := io.Copy(f, tr)
 			raw += n
 			if cerr != nil {
@@ -189,7 +197,8 @@ func extractRun(vmPathArg, dest string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(absDest, 0755); err != nil {
+	// #nosec G703 -- absDest comes from the user's own CLI argument, not the archive
+	if err := os.MkdirAll(absDest, 0750); err != nil {
 		return err
 	}
 
@@ -235,7 +244,7 @@ func extractRun(vmPathArg, dest string, stdout, stderr io.Writer) error {
 		if err != nil {
 			// abort: close the read end so a still-writing ssh sees EPIPE
 			// and exec's stdout copy unblocks Wait
-			pr.CloseWithError(err)
+			_ = pr.CloseWithError(err)
 		}
 		files, raw = f, n
 		extractDone <- err

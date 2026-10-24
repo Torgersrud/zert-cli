@@ -24,23 +24,30 @@ usage:
                                  authenticate and store credentials
   zert logout                    delete stored credentials
   zert me                        show profile, quota, pubkey
-  zert ls                        list your VMs
-  zert vm [--keep] [ssh args..]  create a VM and ssh into it (kill on exit)
+  zert ls                        list your VMs and their time left
+  zert vm [ssh args..]           create a VM and ssh into it — leaving the
+                                 session never kills the VM; only zert kill
+                                 or an expired Idle window ends it
+  zert attach [id] [ssh args..]
+                                 attach to a running VM — the same shell
+                                 comes back (with one live VM the id is
+                                 optional, with several it is required,
+                                 with none it says so); leaving this
+                                 session never kills the VM either
   zert kill <id>..|all           terminate VM(s)
   zert extract <vm-path> [dir]   copy a file/dir from your live vm
                                  into [dir] (default: current dir); vm
                                  paths resolve against the vm user's home
-  zert <path> [--keep] [ssh args..]
-                                   copy a local dir/file into your vm
-                                   (creates one if none is running, and
-                                   sshs into it after the copy — killed on
-                                   exit unless --keep, or unless the vm
-                                   already existed; extra ssh args also
-                                   enter an already-running vm)
-                                  names may only use letters, digits and
-                                  ._@%+=:,- — rename or archive the rest
-                                  the copy is streamed as one compressed
-                                  tar; symlinks are followed
+  zert <path> [ssh args..]
+                                 copy a local dir/file into your vm
+                                 (creates one if none is running, and
+                                 sshs into it after the copy; the vm
+                                 stays up when you leave — extra ssh
+                                 args also enter an already-running vm);
+                                 names may only use letters, digits and
+                                 ._@%+=:,- — rename or archive the rest;
+                                 the copy is streamed as one compressed
+                                 tar, symlinks are followed
 
 host: --host flag > $ZERT_HOST > stored credentials
       (tunnel: $ZERT_HOST must match your logged-in host unless
@@ -65,6 +72,8 @@ func main() {
 		err = cmdLS(os.Args[2:])
 	case "vm":
 		err = cmdVM(os.Args[2:])
+	case "attach":
+		err = cmdAttach(os.Args[2:])
 	case "kill":
 		err = cmdKill(os.Args[2:])
 	case "extract":

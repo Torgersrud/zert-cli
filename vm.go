@@ -13,6 +13,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"golang.org/x/term"
 )
 
 var sshPath = "ssh"
@@ -86,7 +88,8 @@ func createVM(a api) (*vmRow, error) {
 		if rows, err := listVMs(a); err == nil {
 			printVMs(rows)
 		}
-		fmt.Fprintln(os.Stderr, "hint: zert kill <id> (or zert kill all)")
+		fmt.Fprintln(os.Stderr, "hint: zert attach <id> attaches to a live vm; "+
+			"zert kill <id> (or zert kill all) frees a slot")
 		return nil, &exitError{1, errors.New("quota reached")}
 	default:
 		return nil, mapped(resp, data)
@@ -117,10 +120,13 @@ func childEnv(base []string, token, host string) []string {
 	return append(out, "ZERT_TUNNEL_TOKEN="+token, "ZERT_HOST="+host)
 }
 
-// parseSSHArgs splits CLI args into the --keep flag and the args forwarded
-// verbatim to ssh; everything after "--" is passthrough.
-func parseSSHArgs(args []string) (keep bool, sshArgs []string) {
+// parseSSHArgs returns the args forwarded verbatim to ssh — everything
+// after "--" is passthrough — and swallows the deprecated --keep flag:
+// when it was given, this one place prints its deprecation notice, so
+// every entry path (vm, attach, upload) warns exactly once.
+func parseSSHArgs(stderr io.Writer, args []string) (sshArgs []string) {
 	passthrough := false
+	keep := false
 	for _, a := range args {
 		if passthrough {
 			sshArgs = append(sshArgs, a)
@@ -135,12 +141,32 @@ func parseSSHArgs(args []string) (keep bool, sshArgs []string) {
 			sshArgs = append(sshArgs, a)
 		}
 	}
-	return keep, sshArgs
+	if keep {
+		warnKeepDeprecated(stderr)
+	}
+	return sshArgs
 }
 
-// vmRun is cmdVM with injectable stdio and ssh binary (for kill-on-exit tests).
+// warnKeepDeprecated prints the one deprecation notice for the --keep flag,
+// which no longer changes anything: no entry path kills a vm on exit.
+func warnKeepDeprecated(stderr io.Writer) {
+	fmt.Fprintln(stderr, "--keep is obsolete — vms no longer die on exit")
+}
+
+// defaultStdinIsInteractive asks the terminal whether stdin is one — the
+// same golang.org/x/term check login.go uses to read the password.
+func defaultStdinIsInteractive() bool {
+	return term.IsTerminal(int(os.Stdin.Fd()))
+}
+
+// stdinIsInteractive is the seam that says whether an entry is interactive
+// (tests replace it; the production answer reads os.Stdin, which is what
+// every entry path hands to ssh).
+var stdinIsInteractive = defaultStdinIsInteractive
+
+// vmRun is cmdVM with injectable stdio and ssh binary (for the runner seam).
 func vmRun(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
-	keep, sshArgs := parseSSHArgs(args)
+	sshArgs := parseSSHArgs(stderr, args)
 
 	creds, a := requireLogin()
 	me, err := getMe(a)
@@ -159,16 +185,59 @@ func vmRun(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	fmt.Fprintf(stderr, "vm %s ready (expires in %s)\n", vm.SandboxID,
 		time.Until(time.Unix(int64(vm.ExpiresAt), 0)).Round(time.Second))
 
-	return sshVM(creds, a, vm, sshArgs, keep, stdin, stdout, stderr)
+	return sshVM(creds, a, vm, sshArgs, stdin, stdout, stderr)
 }
 
+// sshOptsWithArg lists the ssh(1) option letters whose value is taken as a
+// separate argument (-b -c -D -E -e -F -I -i -J -l -L -m -O -o -p -Q -R -S
+// -w): such a value is not positional and never starts a remote command.
+const sshOptsWithArg = "bcDEeFIiJlLmOopQRSw"
+
+// hasUserRemoteCommand reports whether the forwarded ssh args contain the
+// start of a user-supplied remote command: the first token ssh would read
+// as neither an option nor an option's value. Unknown option letters count
+// as plain flags, so a following bare token lands on the command side —
+// erring that way leaves the argv exactly as today (unwrapped), the safe
+// reading of "passed through".
+func hasUserRemoteCommand(sshArgs []string) bool {
+	for i := 0; i < len(sshArgs); i++ {
+		a := sshArgs[i]
+		switch {
+		case strings.HasPrefix(a, "-") && a != "-":
+			if len(a) == 2 && strings.ContainsRune(sshOptsWithArg, rune(a[1])) {
+				i++ // this option's value is the next token
+			}
+		default:
+			return true
+		}
+	}
+	return false
+}
+
+// interactiveRemoteCmd is the remote command an interactive entry runs in
+// place of a bare login shell: it enters — creating when missing — the one
+// tmux session "zert", so a Detach (detach key, dropped link, dead laptop)
+// only drops the viewer and the next Attach restores the same shell. When
+// the guest has no tmux (a vm from the pre-tmux Template) the guard falls
+// back to a plain login shell, exactly what an unwrapped entry gets.
+const interactiveRemoteCmd = `command -v tmux >/dev/null 2>&1 && exec tmux new -As zert || exec "${SHELL:-sh}" -l`
+
 // sshVM opens an interactive ssh session to the vm through the tunnel,
-// forwarding signals and killing the vm on exit unless keep is set.
-func sshVM(creds *Credentials, a api, vm *vmRow, sshArgs []string, keep bool, stdin io.Reader, stdout, stderr io.Writer) error {
+// forwarding signals, with the guest login living inside the tmux session
+// "zert" so any Detach restores the same shell on the next entry. When the
+// session ends — whatever the reason — the vm keeps running: only `zert
+// kill` or an expired Idle window ever ends it. Only an *interactive*
+// entry wraps: a piped stdin never gets the tmux command or the forced
+// -t, exactly the plain ssh of before the wrap existed.
+func sshVM(creds *Credentials, a api, vm *vmRow, sshArgs []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	self, err := os.Executable()
 	if err != nil {
 		self = "zert"
 	}
+	// the wrap is the remote command only for an interactive entry without
+	// a remote command of the user's own — their args then reach ssh
+	// verbatim, unwrapped, exactly as before tmux
+	wrapped := stdinIsInteractive() && !hasUserRemoteCommand(sshArgs)
 	sshCmd := exec.Command(sshPath)
 	sshCmd.Args = append(sshCmd.Args,
 		"-o", proxyCommand(self, vm.SandboxID),
@@ -176,8 +245,16 @@ func sshVM(creds *Credentials, a api, vm *vmRow, sshArgs []string, keep bool, st
 		"-o", "ServerAliveInterval=30",
 		"-o", "ServerAliveCountMax=4",
 	)
+	if wrapped {
+		// ssh only gives an explicit remote command a tty on request,
+		// and tmux needs one
+		sshCmd.Args = append(sshCmd.Args, "-t")
+	}
 	sshCmd.Args = append(sshCmd.Args, sshArgs...)
 	sshCmd.Args = append(sshCmd.Args, "user@"+vm.SandboxID)
+	if wrapped {
+		sshCmd.Args = append(sshCmd.Args, interactiveRemoteCmd)
+	}
 	sshCmd.Stdin, sshCmd.Stdout, sshCmd.Stderr = stdin, stdout, stderr
 	// the tunnel child gets the token via environment, never argv
 	sshCmd.Env = childEnv(os.Environ(), creds.Token, creds.Host)
@@ -196,14 +273,6 @@ func sshVM(creds *Credentials, a api, vm *vmRow, sshArgs []string, keep bool, st
 	case sig := <-sigc:
 		_ = sshCmd.Process.Signal(sig)
 		waitErr = <-done
-	}
-
-	if !keep {
-		fmt.Fprintln(stderr, "killing vm "+vm.SandboxID+" …")
-		resp, data, err := a.do("DELETE", vmPath(vm.SandboxID), nil)
-		if err != nil || resp.StatusCode != http.StatusOK {
-			fmt.Fprintf(stderr, "zert: kill failed: %v %s\n", err, detail(data))
-		}
 	}
 
 	var ee *exec.ExitError

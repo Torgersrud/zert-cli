@@ -43,7 +43,7 @@ func wsURL(host, id string) (string, error) {
 var closeCodeMsg = map[websocket.StatusCode]string{
 	4401: "session expired — run `zert login`",
 	4403: "no such vm (or not yours)",
-	4410: "vm expired",
+	4410: "vm expired — start a new one with `zert vm`",
 }
 
 // closeMsg prefers the server's close reason, falling back to the

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -20,6 +21,7 @@ type fakeServer struct {
 	keyUploaded string
 	pubkey      *string        // what /v1/me reports
 	live        []string       // sandbox ids reported as live by GET /v1/vm
+	expired     []string       // sandbox ids reported as not live by GET /v1/vm
 	deleteFail  map[string]int // id -> status code for failing DELETEs
 	create      func(w http.ResponseWriter, tries int)
 }
@@ -67,6 +69,11 @@ func newFakeServer(t *testing.T) *fakeServer {
 		for _, id := range fs.live {
 			rows = append(rows, map[string]any{
 				"sandbox_id": id, "expires_at": 9999999999.0, "live": true,
+			})
+		}
+		for _, id := range fs.expired {
+			rows = append(rows, map[string]any{
+				"sandbox_id": id, "expires_at": 1.0, "live": false,
 			})
 		}
 		fs.mu.Unlock()
@@ -134,7 +141,7 @@ func readLog(t *testing.T, path string) string {
 	return string(b)
 }
 
-func TestVMKillOnExit(t *testing.T) {
+func TestVMExitNeverKills(t *testing.T) {
 	fs := newFakeServer(t)
 	setupHome(t, fs.URL)
 	logPath := fakeSSH(t)
@@ -145,8 +152,8 @@ func TestVMKillOnExit(t *testing.T) {
 	fs.mu.Lock()
 	deleted := fs.deleted
 	fs.mu.Unlock()
-	if len(deleted) != 1 || deleted[0] != "vm123" {
-		t.Fatalf("expected DELETE vm123 once, got %v", deleted)
+	if len(deleted) != 0 {
+		t.Fatalf("exit must never kill the vm, got deletes %v", deleted)
 	}
 	logged := readLog(t, logPath)
 	if !strings.Contains(logged, "ARGS -o ProxyCommand=") || !strings.Contains(logged, "tunnel vm123") {
@@ -171,19 +178,83 @@ func TestVMKillOnExit(t *testing.T) {
 	}
 }
 
-func TestVMKeepSkipsDelete(t *testing.T) {
+func TestVMKeepWarnsObsoleteAndNeverKills(t *testing.T) {
 	fs := newFakeServer(t)
 	setupHome(t, fs.URL)
 	fakeSSH(t)
+	var stderr bytes.Buffer
 
-	if err := vmRun([]string{"--keep"}, strings.NewReader(""), os.Stdout, os.Stderr); err != nil {
+	if err := vmRun([]string{"--keep"}, strings.NewReader(""), os.Stdout, &stderr); err != nil {
 		t.Fatal(err)
+	}
+	if n := strings.Count(stderr.String(), "obsolete"); n != 1 {
+		t.Fatalf("want exactly one --keep deprecation notice on stderr, got %d in %q", n, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "no longer die on exit") {
+		t.Fatalf("notice must say vms no longer die on exit, got %q", stderr.String())
 	}
 	fs.mu.Lock()
 	deleted := fs.deleted
 	fs.mu.Unlock()
 	if len(deleted) != 0 {
 		t.Fatalf("--keep must not DELETE, got %v", deleted)
+	}
+}
+
+func TestVMExitCodeNeverKills(t *testing.T) {
+	fs := newFakeServer(t)
+	setupHome(t, fs.URL)
+	fakeSSH(t)
+	t.Setenv("FAKE_SSH_EXIT", "255") // Ctrl-C / dropped link: ssh dies badly
+
+	err := vmRun(nil, strings.NewReader(""), os.Stdout, io.Discard)
+	var ee *exitError
+	if !errors.As(err, &ee) || ee.code != 255 {
+		t.Fatalf("want exit 255 propagated, got %v", err)
+	}
+	fs.mu.Lock()
+	deleted := fs.deleted
+	fs.mu.Unlock()
+	if len(deleted) != 0 {
+		t.Fatalf("ssh exit %d must never kill the vm, got deletes %v", ee.code, deleted)
+	}
+}
+
+// tmuxWrapCmd is the remote command every interactive entry runs, pinned
+// verbatim: enter/attach the one tmux session "zert" when the guest has
+// tmux, plain login shell when it does not (a vm from the pre-tmux
+// Template). It is the contract, so the test owns the literal — and the
+// literal is a deliberate byte-for-byte duplicate of vm.go's
+// interactiveRemoteCmd: if you change one, edit both literals together.
+const tmuxWrapCmd = `command -v tmux >/dev/null 2>&1 && exec tmux new -As zert || exec "${SHELL:-sh}" -l`
+
+// fakeTTY makes stdinIsInteractive report a terminal — a test binary's
+// stdin never is one — so the interactive paths can pin their tmux wrap.
+func fakeTTY(t *testing.T) {
+	t.Helper()
+	t.Cleanup(func() { stdinIsInteractive = defaultStdinIsInteractive })
+	stdinIsInteractive = func() bool { return true }
+}
+
+func TestVMInteractiveEntryRunsTmuxWrap(t *testing.T) {
+	fs := newFakeServer(t)
+	setupHome(t, fs.URL)
+	logPath := fakeSSH(t)
+	fakeTTY(t)
+
+	if err := vmRun(nil, strings.NewReader(""), os.Stdout, os.Stderr); err != nil {
+		t.Fatal(err)
+	}
+	lines := argLines(readLog(t, logPath))
+	if len(lines) != 1 {
+		t.Fatalf("want exactly one ssh call, got %d", len(lines))
+	}
+	line := lines[0]
+	// the wrap is the remote command — it follows the destination — and it
+	// comes with -t, because ssh only gives an explicit command a tty once
+	// a command is present, and tmux needs one
+	if !strings.Contains(line, "-t user@vm123 "+tmuxWrapCmd) || !strings.HasSuffix(line, tmuxWrapCmd) {
+		t.Fatalf("tmux wrap not the remote command of the interactive ssh: %s", line)
 	}
 }
 
@@ -200,6 +271,62 @@ func TestVMSSHArgsForwarded(t *testing.T) {
 	if !strings.Contains(logged, "ARGS -o ProxyCommand=") ||
 		!strings.Contains(logged, "-L 8080:localhost:80 user@vm123") {
 		t.Fatalf("user ssh args not forwarded before destination: %s", logged)
+	}
+}
+
+func TestVMUserRemoteCommandStaysUnwrapped(t *testing.T) {
+	fs := newFakeServer(t)
+	setupHome(t, fs.URL)
+	logPath := fakeSSH(t)
+
+	err := vmRun([]string{"--", "uptime"}, strings.NewReader(""), os.Stdout, os.Stderr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := argLines(readLog(t, logPath))[0]
+	// a user-supplied remote command is passed through exactly as today:
+	// verbatim in the args, and nothing — no tmux wrap — after the
+	// destination
+	if strings.Contains(line, "tmux") || !strings.HasSuffix(line, "uptime user@vm123") {
+		t.Fatalf("user remote command was wrapped: %s", line)
+	}
+}
+
+func TestVMSSHOptionArgsStillWrap(t *testing.T) {
+	fs := newFakeServer(t)
+	setupHome(t, fs.URL)
+	logPath := fakeSSH(t)
+	fakeTTY(t)
+
+	err := vmRun([]string{"-L", "8080:localhost:80"}, strings.NewReader(""), os.Stdout, os.Stderr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := argLines(readLog(t, logPath))[0]
+	// an option's value is not a remote command: port forwarding with no
+	// command still lands in the tmux session
+	if !strings.Contains(line, "-L 8080:localhost:80 user@vm123 "+tmuxWrapCmd) {
+		t.Fatalf("option-only ssh args lost the tmux wrap: %s", line)
+	}
+}
+
+func TestVMPipedStdinNeverWraps(t *testing.T) {
+	fs := newFakeServer(t)
+	setupHome(t, fs.URL)
+	logPath := fakeSSH(t)
+	t.Cleanup(func() { stdinIsInteractive = defaultStdinIsInteractive })
+	stdinIsInteractive = func() bool { return false } // `echo cmd | zert vm`
+
+	if err := vmRun(nil, strings.NewReader("echo hi\n"), os.Stdout, os.Stderr); err != nil {
+		t.Fatal(err)
+	}
+	line := argLines(readLog(t, logPath))[0]
+	// only an interactive entry runs tmux: ssh hands a piped session no
+	// pty, so this stays the plain ssh of before the wrap existed — no
+	// tmux, no forced -t, nothing after the destination
+	if strings.Contains(line, "tmux") || strings.Contains(line, " -t ") ||
+		!strings.HasSuffix(line, "user@vm123") {
+		t.Fatalf("piped stdin was wrapped in tmux: %s", line)
 	}
 }
 
@@ -308,13 +435,31 @@ func TestVMQuota409ShowsList(t *testing.T) {
 		http.Error(w, `{"detail":"quota reached (1 live VM)"}`, 409)
 	}
 
-	err := vmRun(nil, strings.NewReader(""), os.Stdout, os.Stderr)
+	// the quota listing and its hint print straight to os.Stderr
+	var err error
+	hint := captureStderr(t, func() {
+		err = vmRun(nil, strings.NewReader(""), os.Stdout, os.Stderr)
+	})
 	var ee *exitError
 	if !errors.As(err, &ee) || ee.code != 1 {
 		t.Fatalf("want exit 1, got %v", err)
 	}
 	if err == nil || !strings.Contains(err.Error(), "quota reached") {
 		t.Fatalf("want quota-reached error, got %v", err)
+	}
+	if !strings.Contains(hint, "zert attach <id>") {
+		t.Fatalf("quota-409 hint must offer zert attach, got %q", hint)
+	}
+	if !strings.Contains(hint, "zert kill <id>") {
+		t.Fatalf("quota-409 hint must still offer zert kill, got %q", hint)
+	}
+	// the product glossary bans "re-" coinages for Attach (nothing is being
+	// re- — the vm never left), so the hint must use attacher wording
+	if strings.Contains(hint, "re-enter") {
+		t.Fatalf("quota-409 hint uses a banned re- word, got %q", hint)
+	}
+	if !strings.Contains(hint, "attaches to a live vm") {
+		t.Fatalf("quota-409 hint must say attach attaches to a live vm, got %q", hint)
 	}
 }
 

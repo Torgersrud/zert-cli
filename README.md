@@ -5,7 +5,9 @@ Zert-cli is the client for the [zert](https://zert.no) sandbox service. Boot a v
 - One static Go binary.
 - Your SSH key authenticates you to *your* VMs; the session token never
   appears in argv or URLs.
-- VMs are killed automatically when you leave the shell (unless `--keep`).
+- Leaving the ssh session never kills the VM — dropping out (`exit`,
+  Ctrl-C, a dead connection) leaves it running. Only `zert kill`, or the
+  VM's own expiry, ends a VM.
 
 ## Install
 
@@ -38,7 +40,7 @@ zert --version
 ```
 
 `zert ./myproject` starts a VM if none is live and drops you into an ssh
-session afterwards (killing that VM on exit unless `--keep`); if one is
+session afterwards; when you leave, that VM keeps running. If one is
 already live it just copies into it.
 
 `zert extract <vm-path> [dir]` is the way back out: it copies a file or
@@ -50,9 +52,11 @@ or kills a VM — start one with `zert vm` or `zert <path>` first.
 
 To add args for the zert ssh session, pass them after the command
 (e.g. `zert vm -L 8080:localhost:8080` or `zert ./myproject -L 8080:localhost:8080`).
-With `zert <path>`, extra ssh args (or `--keep`) also make you enter an
-already-running VM after the copy; the entered VM is only killed on exit if
-that same command created it.
+With `zert <path>`, extra ssh args also make you enter an already-running
+VM after the copy. Entering — and leaving — never ends a VM either way;
+`zert kill` (or the VM's expiry) is the only way one dies. The old
+`--keep` flag is still accepted everywhere for existing scripts; it
+prints one "obsolete" notice and changes nothing.
 
 ## Configuration
 

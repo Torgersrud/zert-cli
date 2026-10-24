@@ -226,10 +226,19 @@ func TestVMExitCodeNeverKills(t *testing.T) {
 // Template). It is the contract, so the test owns the literal.
 const tmuxWrapCmd = `command -v tmux >/dev/null 2>&1 && exec tmux new -As zert || exec "${SHELL:-sh}" -l`
 
+// fakeTTY makes stdinIsInteractive report a terminal — a test binary's
+// stdin never is one — so the interactive paths can pin their tmux wrap.
+func fakeTTY(t *testing.T) {
+	t.Helper()
+	t.Cleanup(func() { stdinIsInteractive = defaultStdinIsInteractive })
+	stdinIsInteractive = func() bool { return true }
+}
+
 func TestVMInteractiveEntryRunsTmuxWrap(t *testing.T) {
 	fs := newFakeServer(t)
 	setupHome(t, fs.URL)
 	logPath := fakeSSH(t)
+	fakeTTY(t)
 
 	if err := vmRun(nil, strings.NewReader(""), os.Stdout, os.Stderr); err != nil {
 		t.Fatal(err)
@@ -285,6 +294,7 @@ func TestVMSSHOptionArgsStillWrap(t *testing.T) {
 	fs := newFakeServer(t)
 	setupHome(t, fs.URL)
 	logPath := fakeSSH(t)
+	fakeTTY(t)
 
 	err := vmRun([]string{"-L", "8080:localhost:80"}, strings.NewReader(""), os.Stdout, os.Stderr)
 	if err != nil {
@@ -295,6 +305,26 @@ func TestVMSSHOptionArgsStillWrap(t *testing.T) {
 	// command still lands in the tmux session
 	if !strings.Contains(line, "-L 8080:localhost:80 user@vm123 "+tmuxWrapCmd) {
 		t.Fatalf("option-only ssh args lost the tmux wrap: %s", line)
+	}
+}
+
+func TestVMPipedStdinNeverWraps(t *testing.T) {
+	fs := newFakeServer(t)
+	setupHome(t, fs.URL)
+	logPath := fakeSSH(t)
+	t.Cleanup(func() { stdinIsInteractive = defaultStdinIsInteractive })
+	stdinIsInteractive = func() bool { return false } // `echo cmd | zert vm`
+
+	if err := vmRun(nil, strings.NewReader("echo hi\n"), os.Stdout, os.Stderr); err != nil {
+		t.Fatal(err)
+	}
+	line := argLines(readLog(t, logPath))[0]
+	// only an interactive entry runs tmux: ssh hands a piped session no
+	// pty, so this stays the plain ssh of before the wrap existed — no
+	// tmux, no forced -t, nothing after the destination
+	if strings.Contains(line, "tmux") || strings.Contains(line, " -t ") ||
+		!strings.HasSuffix(line, "user@vm123") {
+		t.Fatalf("piped stdin was wrapped in tmux: %s", line)
 	}
 }
 

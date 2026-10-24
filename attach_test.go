@@ -13,6 +13,7 @@ func TestAttachRunsInsideTmuxSession(t *testing.T) {
 	fs.live = []string{"vma"}
 	setupHome(t, fs.URL)
 	logPath := fakeSSH(t)
+	fakeTTY(t)
 
 	if err := attachRun(nil, strings.NewReader(""), os.Stdout, os.Stderr); err != nil {
 		t.Fatal(err)

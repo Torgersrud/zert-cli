@@ -162,6 +162,7 @@ func TestUploadEntryRunsTmuxCopyStreamNever(t *testing.T) {
 	fs := newFakeServer(t)
 	setupHome(t, fs.URL)
 	logPath := fakeSSH(t)
+	fakeTTY(t)
 	dir := tempDirNamed(t, "mydir")
 
 	if err := uploadRun(dir, nil, false, strings.NewReader(""), os.Stdout, os.Stderr); err != nil {

@@ -13,6 +13,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"golang.org/x/term"
 )
 
 var sshPath = "ssh"
@@ -146,6 +148,17 @@ func warnKeepDeprecated(stderr io.Writer) {
 	fmt.Fprintln(stderr, "--keep is obsolete — vms no longer die on exit")
 }
 
+// defaultStdinIsInteractive asks the terminal whether stdin is one — the
+// same golang.org/x/term check login.go uses to read the password.
+func defaultStdinIsInteractive() bool {
+	return term.IsTerminal(int(os.Stdin.Fd()))
+}
+
+// stdinIsInteractive is the seam that says whether an entry is interactive
+// (tests replace it; the production answer reads os.Stdin, which is what
+// every entry path hands to ssh).
+var stdinIsInteractive = defaultStdinIsInteractive
+
 // vmRun is cmdVM with injectable stdio and ssh binary (for the runner seam).
 func vmRun(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	keep, sshArgs := parseSSHArgs(args)
@@ -213,16 +226,18 @@ const interactiveRemoteCmd = `command -v tmux >/dev/null 2>&1 && exec tmux new -
 // forwarding signals, with the guest login living inside the tmux session
 // "zert" so any Detach restores the same shell on the next entry. When the
 // session ends — whatever the reason — the vm keeps running: only `zert
-// kill` or an expired Idle window ever ends it.
+// kill` or an expired Idle window ever ends it. Only an *interactive*
+// entry wraps: a piped stdin never gets the tmux command or the forced
+// -t, exactly the plain ssh of before the wrap existed.
 func sshVM(creds *Credentials, a api, vm *vmRow, sshArgs []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	self, err := os.Executable()
 	if err != nil {
 		self = "zert"
 	}
-	// the wrap is the remote command only when the user did not supply one
-	// of their own — their args then reach ssh verbatim, unwrapped, exactly
-	// as before tmux
-	wrapped := !hasUserRemoteCommand(sshArgs)
+	// the wrap is the remote command only for an interactive entry without
+	// a remote command of the user's own — their args then reach ssh
+	// verbatim, unwrapped, exactly as before tmux
+	wrapped := stdinIsInteractive() && !hasUserRemoteCommand(sshArgs)
 	sshCmd := exec.Command(sshPath)
 	sshCmd.Args = append(sshCmd.Args,
 		"-o", proxyCommand(self, vm.SandboxID),

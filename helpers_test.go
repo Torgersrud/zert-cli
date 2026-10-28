@@ -29,6 +29,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // --- the API fake -------------------------------------------------------
@@ -148,6 +149,18 @@ const (
 	streamReplayStdout = `cat "$FAKE_SSH_STDOUT"`
 )
 
+// streamBlockUntilSignal is the shape of a long copy the user interrupts: no
+// data moves, the fake ssh arms traps for the terminal's signals, reports
+// READY once they can be taken, and whichever signal arrives is recorded
+// before it exits with ssh's own 128+signum convention. Undisturbed for ~5s
+// it ends like an ordinary finished copy, so a test whose signal goes
+// unforwarded fails on its assertion instead of hanging.
+const streamBlockUntilSignal = `trap 'printf "SIGNAL SIGINT\n" >> "$FAKE_SSH_LOG"; exit 130' INT
+trap 'printf "SIGNAL SIGTERM\n" >> "$FAKE_SSH_LOG"; exit 143' TERM
+printf "READY\n" >> "$FAKE_SSH_LOG"
+n=0
+while [ "$n" -lt 50 ]; do sleep 0.1; n=$((n+1)); done`
+
 // fakeSSHScript installs the one fake ssh every path runs: it records argv
 // and the tunnel token env of every call, moves the data stream as stream
 // says, and exits with the code in FAKE_SSH_EXIT. It returns the log it
@@ -194,6 +207,30 @@ func fakeSSHRecordingStdin(t *testing.T) (logPath, stdinPath string) {
 func fakeSSHStreamingStdout(t *testing.T) string {
 	t.Helper()
 	return fakeSSHScript(t, streamReplayStdout)
+}
+
+// fakeSSHBlockingUntilSignal is fakeSSH as a copy long enough to interrupt:
+// it streams nothing and waits, only ending when a forwarded signal reaches
+// it (recorded as a SIGNAL line) or its ~5s is up. The signal test's fake.
+func fakeSSHBlockingUntilSignal(t *testing.T) string {
+	t.Helper()
+	return fakeSSHScript(t, streamBlockUntilSignal)
+}
+
+// awaitFakeSSHReady blocks until the blocking fake ssh has logged READY —
+// i.e. its signal traps are armed — so a test raises its signal only once the
+// child could actually take it. Bounded: a fake that never started up fails
+// this test rather than hanging the suite.
+func awaitFakeSSHReady(t *testing.T, logPath string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if b, err := os.ReadFile(logPath); err == nil && strings.Contains(string(b), "READY") {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("fake ssh never reported its signal traps armed")
 }
 
 func readLog(t *testing.T, path string) string {

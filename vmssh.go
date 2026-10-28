@@ -4,8 +4,7 @@ package main
 // against a vm". Two named entry points share every private policy:
 //
 //   - enterVM: the interactive Entry (`zert vm`, `zert attach`, and the
-//     post-copy entry of `zert <path>`), tmux wrap and signal forwarding
-//     included;
+//     post-copy entry of `zert <path>`), tmux wrap included;
 //   - execInVM: a non-interactive exec with piped stdio (the upload copy
 //     stream, `zert extract`), whose interface cannot express the tmux wrap
 //     or a forced -t — "a piped stream never gets the wrap" is structural.
@@ -13,10 +12,10 @@ package main
 // The invariants that hold on every path live once here: the base options
 // (self-exec ProxyCommand, accept-new host keys, the keepalive pair), the
 // user@<id> destination, the token reaching the tunnel child via environment
-// and never argv, the spawn/exit error wording, and — per the product's
-// ADR-0002 — that entering a vm never ends its life: no function in this
-// module so much as mentions DELETE; only `zert kill` or the vm's expiry
-// does.
+// and never argv, the spawn/exit error wording, SIGINT/SIGTERM forwarding to
+// the ssh child, and — per the product's ADR-0002 — that entering a vm never
+// ends its life: no function in this module so much as mentions DELETE; only
+// `zert kill` or the vm's expiry does.
 
 import (
 	"errors"
@@ -193,13 +192,16 @@ func enterVM(creds *Credentials, vm *vmRow, sshArgs []string, stdin io.Reader, s
 // the signature rather than a rule to remember. The caller owns any pipes it
 // feeds or drains around the call; a non-nil error from here is the
 // authoritative failure and outranks stream fallout (an ssh exit error
-// arrives as an *exitError carrying ssh's exit code).
-//
-// NOTE (ticket #12): SIGINT/SIGTERM forwarding joins enterVM's here, inside
-// this function — the interface does not change.
+// arrives as an *exitError carrying ssh's exit code). Like the interactive
+// Entry, a signal that reaches zert is forwarded to the ssh child, so a
+// Ctrl-C during a long copy or extract stops that child instead of leaving
+// its fate to chance.
 func execInVM(creds *Credentials, vm *vmRow, remoteCmd string, stdin io.Reader, stdout, stderr io.Writer) error {
 	sshCmd := vmSSHCommand(creds, vm, stdin, stdout, stderr)
 	sshCmd.Args = append(sshCmd.Args, vmUserDest(vm.SandboxID), remoteCmd)
+	sigc := make(chan os.Signal, 2)
+	signal.Notify(sigc, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigc)
 	if err := sshCmd.Start(); err != nil {
 		// never leave a caller's stream producer writing into a stdin that
 		// got no child
@@ -208,5 +210,14 @@ func execInVM(creds *Credentials, vm *vmRow, remoteCmd string, stdin io.Reader, 
 		}
 		return fmt.Errorf("spawn ssh: %w", err)
 	}
-	return sshResult(sshCmd.Wait())
+	done := make(chan error, 1)
+	go func() { done <- sshCmd.Wait() }()
+	var waitErr error
+	select {
+	case waitErr = <-done:
+	case sig := <-sigc:
+		_ = sshCmd.Process.Signal(sig)
+		waitErr = <-done
+	}
+	return sshResult(waitErr)
 }

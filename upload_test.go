@@ -9,10 +9,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
+	"time"
 )
 
 // The fake-ssh generators and the shared Entry-path assertions used below
@@ -274,6 +277,57 @@ func TestUploadSSHFailureExitCode(t *testing.T) {
 		t.Fatalf("want exit 1, got %v", err)
 	}
 	assertNoVMDeleted(t, fs, "ssh that fails")
+}
+
+func TestUploadCopyStreamForwardsSIGINTToSSH(t *testing.T) {
+	fs := newFakeServer(t)
+	fs.live = []string{"vmlive"}
+	setupHome(t, fs.URL)
+	logPath := fakeSSHBlockingUntilSignal(t)
+
+	dir := tempDirNamed(t, "mydir")
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("hello"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// While this test raises the signal, keep the default "SIGINT kills the
+	// process" off the test binary: this guard channel absorbs an interrupt
+	// the exec path does not forward, so the regression fails the assertion
+	// below instead of killing the suite. The Stop returns the process to
+	// its default behaviour, leaving no handler registered for later tests.
+	guard := make(chan os.Signal, 1)
+	signal.Notify(guard, syscall.SIGINT)
+	t.Cleanup(func() { signal.Stop(guard) })
+
+	done := make(chan error, 1)
+	go func() {
+		done <- uploadRun(dir, nil, strings.NewReader(""), io.Discard, io.Discard)
+	}()
+
+	// the Ctrl-C of a customer watching a long copy upload: the signal goes
+	// to this process, exactly as a terminal sends it to zert — forwarding
+	// is what the module under test must do from there
+	awaitFakeSSHReady(t, logPath)
+	if err := syscall.Kill(os.Getpid(), syscall.SIGINT); err != nil {
+		t.Fatal(err)
+	}
+
+	var err error
+	select {
+	case err = <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("upload never stopped after its ssh child was interrupted")
+	}
+
+	if logged := readLog(t, logPath); !strings.Contains(logged, "SIGNAL SIGINT") {
+		t.Fatalf("SIGINT raised during the copy never reached the ssh child: %s", logged)
+	}
+	// and the run stops cleanly: ssh's interrupted exit code reaches the caller
+	var ee *exitError
+	if !errors.As(err, &ee) || ee.code != 130 {
+		t.Fatalf("want interrupted ssh's exit 130, got %v", err)
+	}
+	assertNoVMDeleted(t, fs, "an interrupted upload")
 }
 
 func TestUploadTarStreamContents(t *testing.T) {

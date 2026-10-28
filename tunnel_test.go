@@ -8,7 +8,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -148,17 +147,7 @@ func TestTunnelRelaysLargeFrame(t *testing.T) {
 	}
 }
 
-func captureStderr(t *testing.T, fn func()) string {
-	t.Helper()
-	old := os.Stderr
-	r, w, _ := os.Pipe()
-	os.Stderr = w
-	fn()
-	w.Close()
-	os.Stderr = old
-	b, _ := io.ReadAll(r)
-	return string(b)
-}
+// captureStderr, shared with the other suites, lives in helpers_test.go.
 
 func TestTunnelCloseCodes(t *testing.T) {
 	for _, tc := range []struct {

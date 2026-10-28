@@ -143,6 +143,38 @@ func sshResult(waitErr error) error {
 	return nil
 }
 
+// errSpawn marks the one failure runWithSignalForwarding reports from before
+// a child exists. A caller that pipes a stream into the child tells "spawn
+// failed" from "the child ran and lost" with errors.Is on it, and releases
+// the stream's producer only in the first case (see execInVM). The wording a
+// caller sees is unchanged: the helper formats it as "spawn ssh: %w".
+var errSpawn = errors.New("spawn ssh")
+
+// runWithSignalForwarding is the module's one spawn-and-wait tail, the whole
+// signal-forwarding invariant in one place: it registers SIGINT/SIGTERM with
+// this process (deregistered on the way out), starts the child, waits on it
+// in a goroutine, and when a signal arrives while the child runs it forwards
+// that signal to the child before reaping it. The child's fate then goes
+// through sshResult, so every entry point reads failure the same way.
+func runWithSignalForwarding(sshCmd *exec.Cmd) error {
+	sigc := make(chan os.Signal, 2)
+	signal.Notify(sigc, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigc)
+	if err := sshCmd.Start(); err != nil {
+		return fmt.Errorf("%w: %w", errSpawn, err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- sshCmd.Wait() }()
+	var waitErr error
+	select {
+	case waitErr = <-done:
+	case sig := <-sigc:
+		_ = sshCmd.Process.Signal(sig)
+		waitErr = <-done
+	}
+	return sshResult(waitErr)
+}
+
 // enterVM opens an interactive ssh session to the vm through the tunnel,
 // forwarding signals, with the guest login living inside the tmux session
 // "zert" so any Detach restores the same shell on the next entry. When the
@@ -166,23 +198,7 @@ func enterVM(creds *Credentials, vm *vmRow, sshArgs []string, stdin io.Reader, s
 	if wrapped {
 		sshCmd.Args = append(sshCmd.Args, interactiveRemoteCmd)
 	}
-
-	sigc := make(chan os.Signal, 2)
-	signal.Notify(sigc, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigc)
-	if err := sshCmd.Start(); err != nil {
-		return fmt.Errorf("spawn ssh: %w", err)
-	}
-	done := make(chan error, 1)
-	go func() { done <- sshCmd.Wait() }()
-	var waitErr error
-	select {
-	case waitErr = <-done:
-	case sig := <-sigc:
-		_ = sshCmd.Process.Signal(sig)
-		waitErr = <-done
-	}
-	return sshResult(waitErr)
+	return runWithSignalForwarding(sshCmd)
 }
 
 // execInVM runs remoteCmd inside the vm as a non-interactive ssh exec with
@@ -199,25 +215,13 @@ func enterVM(creds *Credentials, vm *vmRow, sshArgs []string, stdin io.Reader, s
 func execInVM(creds *Credentials, vm *vmRow, remoteCmd string, stdin io.Reader, stdout, stderr io.Writer) error {
 	sshCmd := vmSSHCommand(creds, vm, stdin, stdout, stderr)
 	sshCmd.Args = append(sshCmd.Args, vmUserDest(vm.SandboxID), remoteCmd)
-	sigc := make(chan os.Signal, 2)
-	signal.Notify(sigc, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigc)
-	if err := sshCmd.Start(); err != nil {
+	err := runWithSignalForwarding(sshCmd)
+	if errors.Is(err, errSpawn) {
 		// never leave a caller's stream producer writing into a stdin that
 		// got no child
 		if closer, ok := stdin.(io.Closer); ok {
 			_ = closer.Close()
 		}
-		return fmt.Errorf("spawn ssh: %w", err)
 	}
-	done := make(chan error, 1)
-	go func() { done <- sshCmd.Wait() }()
-	var waitErr error
-	select {
-	case waitErr = <-done:
-	case sig := <-sigc:
-		_ = sshCmd.Process.Signal(sig)
-		waitErr = <-done
-	}
-	return sshResult(waitErr)
+	return err
 }

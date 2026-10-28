@@ -99,7 +99,7 @@ func TestExtractHappyPath(t *testing.T) {
 	}
 	dest := t.TempDir()
 
-	if err := extractRun("~/out", dest, os.Stdout, os.Stderr); err != nil {
+	if err := extractRun("~/out", dest, os.Stderr); err != nil {
 		t.Fatal(err)
 	}
 	b, err := os.ReadFile(filepath.Join(dest, "out", "a.txt"))
@@ -144,7 +144,7 @@ func TestExtractCreatesDestDir(t *testing.T) {
 	fs.live = []string{"vmlive"}
 	dest := filepath.Join(t.TempDir(), "new", "nested")
 
-	if err := extractRun("~/report.txt", dest, os.Stdout, os.Stderr); err != nil {
+	if err := extractRun("~/report.txt", dest, os.Stderr); err != nil {
 		t.Fatal(err)
 	}
 	b, err := os.ReadFile(filepath.Join(dest, "report.txt"))
@@ -162,7 +162,7 @@ func TestExtractNoLiveVM(t *testing.T) {
 		http.Error(w, `{"detail":"no"}`, 500)
 	}
 
-	err := extractRun("~/out", t.TempDir(), os.Stdout, os.Stderr)
+	err := extractRun("~/out", t.TempDir(), os.Stderr)
 	if err == nil || !strings.Contains(err.Error(), "no live vm") {
 		t.Fatalf("want no-live-vm error, got %v", err)
 	}
@@ -181,7 +181,7 @@ func TestExtractTarSlipRefused(t *testing.T) {
 		t.Setenv("FAKE_SSH_STDOUT", tarPath)
 		fakeSSHStreamingStdout(t)
 
-		err := extractRun("~/out", dest, os.Stdout, os.Stderr)
+		err := extractRun("~/out", dest, os.Stderr)
 		if err == nil || !strings.Contains(err.Error(), "traversal") || !strings.Contains(err.Error(), "../evil") {
 			t.Fatalf("want traversal refusal, got %v", err)
 		}
@@ -194,7 +194,7 @@ func TestExtractTarSlipRefused(t *testing.T) {
 		t.Setenv("FAKE_SSH_STDOUT", tarPath)
 		fakeSSHStreamingStdout(t)
 
-		err := extractRun("~/out", t.TempDir(), os.Stdout, os.Stderr)
+		err := extractRun("~/out", t.TempDir(), os.Stderr)
 		if err == nil || !strings.Contains(err.Error(), "absolute") || !strings.Contains(err.Error(), "/abs") {
 			t.Fatalf("want absolute-path refusal, got %v", err)
 		}
@@ -213,7 +213,7 @@ func TestExtractSymlinkSkipped(t *testing.T) {
 	fs.live = []string{"vmlive"}
 	dest := t.TempDir()
 
-	if err := extractRun("~/out", dest, os.Stdout, os.Stderr); err != nil {
+	if err := extractRun("~/out", dest, os.Stderr); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Lstat(filepath.Join(dest, "out", "link")); err == nil {
@@ -234,7 +234,7 @@ func TestExtractSingleFile(t *testing.T) {
 	dest := t.TempDir()
 
 	// bare name (no slash) resolves against the vm home, i.e. -C ~ (unquoted)
-	if err := extractRun("note.txt", dest, os.Stdout, os.Stderr); err != nil {
+	if err := extractRun("note.txt", dest, os.Stderr); err != nil {
 		t.Fatal(err)
 	}
 	b, err := os.ReadFile(filepath.Join(dest, "note.txt"))
@@ -256,7 +256,7 @@ func TestExtractBadRemotePathNoNetwork(t *testing.T) {
 	setupHome(t, ts.URL)
 	fakeSSH(t)
 
-	if err := extractRun("a;b", t.TempDir(), os.Stdout, os.Stderr); err == nil {
+	if err := extractRun("a;b", t.TempDir(), os.Stderr); err == nil {
 		t.Fatal("expected error for bad vm path")
 	}
 	if n := atomic.LoadInt32(&hits); n != 0 {
@@ -369,7 +369,7 @@ func TestExtractSSHFailureExitCode(t *testing.T) {
 	fs.live = []string{"vmlive"}
 
 	// ssh's exit code must win over any downstream stream fallout
-	err := extractRun("~/note.txt", t.TempDir(), os.Stdout, os.Stderr)
+	err := extractRun("~/note.txt", t.TempDir(), os.Stderr)
 	var ee *exitError
 	if !errors.As(err, &ee) || ee.code != 1 {
 		t.Fatalf("want exit 1, got %v", err)
@@ -386,7 +386,7 @@ func TestExtractDefaultDestCwd(t *testing.T) {
 	cwd := t.TempDir()
 	t.Chdir(cwd)
 
-	if err := extractRun("~/note.txt", "", os.Stdout, os.Stderr); err != nil {
+	if err := extractRun("~/note.txt", "", os.Stderr); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(cwd, "note.txt")); err != nil {

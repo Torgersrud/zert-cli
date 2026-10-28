@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -253,23 +252,7 @@ func uploadRun(arg string, sshArgs []string, stdin io.Reader, stdout, stderr io.
 		created = true
 	}
 
-	dest := "user@" + vm.SandboxID
-	self, err := os.Executable()
-	if err != nil {
-		self = "zert"
-	}
-	sshCmd := exec.Command(sshPath)
-	sshCmd.Args = append(sshCmd.Args,
-		"-o", proxyCommand(self, vm.SandboxID),
-		"-o", "StrictHostKeyChecking=accept-new",
-		"-o", "ServerAliveInterval=30",
-		"-o", "ServerAliveCountMax=4",
-		dest,
-		uploadRemoteCmd,
-	)
-	sshCmd.Stdout, sshCmd.Stderr = stdout, stderr
-	// the tunnel child gets the token via environment, never argv
-	sshCmd.Env = childEnv(os.Environ(), creds.Token, creds.Host)
+	dest := vmUserDest(vm.SandboxID)
 
 	kind := "path"
 	// #nosec G703 -- stat of the user-requested source, only used to label output
@@ -283,11 +266,6 @@ func uploadRun(arg string, sshArgs []string, stdin io.Reader, stdout, stderr io.
 	fmt.Fprintf(stderr, "uploading %s (%s) → %s:~/%s\n", abs, kind, dest, base)
 
 	pr, pw := io.Pipe()
-	sshCmd.Stdin = pr
-	if err := sshCmd.Start(); err != nil {
-		_ = pw.Close()
-		return fmt.Errorf("spawn ssh: %w", err)
-	}
 	packDone := make(chan error, 1)
 	var raw, packed int64
 	go func() {
@@ -296,14 +274,12 @@ func uploadRun(arg string, sshArgs []string, stdin io.Reader, stdout, stderr io.
 		pw.CloseWithError(err)
 		packDone <- err
 	}()
-	waitErr := sshCmd.Wait()
+	// the packer runs concurrently with the copy: its pipe writes simply
+	// block until execInVM's ssh child is alive and reading
+	sshErr := execInVM(creds, vm, uploadRemoteCmd, pr, stdout, stderr)
 	packErr := <-packDone
-	if waitErr != nil {
-		var ee *exec.ExitError
-		if errors.As(waitErr, &ee) {
-			return &exitError{ee.ExitCode(), fmt.Errorf("ssh exited with %d", ee.ExitCode())}
-		}
-		return fmt.Errorf("run ssh: %w", waitErr)
+	if sshErr != nil {
+		return sshErr
 	}
 	// a broken pipe with a clean ssh exit just means ssh closed stdin early
 	if packErr != nil && !errors.Is(packErr, io.ErrClosedPipe) {
@@ -315,7 +291,7 @@ func uploadRun(arg string, sshArgs []string, stdin io.Reader, stdout, stderr io.
 	// ends a vm — and --keep no longer decides anything either.
 	if created || len(sshArgs) > 0 {
 		fmt.Fprintf(stderr, "entering vm %s …\n", vm.SandboxID)
-		return sshVM(creds, a, vm, sshArgs, stdin, stdout, stderr)
+		return enterVM(creds, vm, sshArgs, stdin, stdout, stderr)
 	}
 	return nil
 }

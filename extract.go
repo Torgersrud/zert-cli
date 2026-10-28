@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"strings"
@@ -156,9 +155,10 @@ func extractTarGz(dir string, r io.Reader) (files int, raw int64, err error) {
 
 // extractRun is cmdExtract with injectable stdio (for tests). The inverse of
 // uploadRun: the vm streams a tar.gz of vmPath over ssh stdout and it is
-// unpacked into dest. It never creates, enters or kills a vm — the vm must
-// already be live.
-func extractRun(vmPathArg, dest string, stdout, stderr io.Writer) error {
+// unpacked into dest. Nothing of the transfer goes to the CLI's stdout — the
+// bytes land in the unpacked files — so there is no stdout writer here.
+// It never creates, enters or kills a vm — the vm must already be live.
+func extractRun(vmPathArg, dest string, stderr io.Writer) error {
 	// parse before any network: a bad name must cost zero requests
 	dir, base, err := splitRemotePath(vmPathArg)
 	if err != nil {
@@ -202,34 +202,10 @@ func extractRun(vmPathArg, dest string, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	remote := "user@" + vm.SandboxID
-	self, err := os.Executable()
-	if err != nil {
-		self = "zert"
-	}
-	sshCmd := exec.Command(sshPath)
-	sshCmd.Args = append(sshCmd.Args,
-		"-o", proxyCommand(self, vm.SandboxID),
-		"-o", "StrictHostKeyChecking=accept-new",
-		"-o", "ServerAliveInterval=30",
-		"-o", "ServerAliveCountMax=4",
-		remote,
-		extractRemoteCmd(dir, base),
-	)
-	sshCmd.Stdin = nil
-	sshCmd.Stderr = stderr
-	// the tunnel child gets the token via environment, never argv
-	sshCmd.Env = childEnv(os.Environ(), creds.Token, creds.Host)
-
+	remote := vmUserDest(vm.SandboxID)
 	fmt.Fprintf(stderr, "extracting %s:%s → %s …\n", remote, vmPathArg, absDest)
 
 	pr, pw := io.Pipe()
-	sshCmd.Stdout = pw
-	if err := sshCmd.Start(); err != nil {
-		_ = pr.Close()
-		_ = pw.Close()
-		return fmt.Errorf("spawn ssh: %w", err)
-	}
 	cr := &countReader{r: pr}
 	extractDone := make(chan error, 1)
 	var files int
@@ -249,17 +225,15 @@ func extractRun(vmPathArg, dest string, stdout, stderr io.Writer) error {
 		files, raw = f, n
 		extractDone <- err
 	}()
-	waitErr := sshCmd.Wait()
+	// the untar runs concurrently with the transfer: it simply blocks on the
+	// pipe until execInVM's ssh child starts writing
+	sshErr := execInVM(creds, vm, extractRemoteCmd(dir, base), nil, pw, stderr)
 	_ = pw.Close() // child is gone: hand the untar reader its EOF
 	tarErr := <-extractDone
-	var ee *exec.ExitError
-	if errors.As(waitErr, &ee) {
+	if sshErr != nil {
 		// ssh's exit code is the authoritative failure; a downstream stream
 		// error is usually just the fallout of the truncated transfer
-		return &exitError{ee.ExitCode(), fmt.Errorf("ssh exited with %d", ee.ExitCode())}
-	}
-	if waitErr != nil {
-		return fmt.Errorf("run ssh: %w", waitErr)
+		return sshErr
 	}
 	if tarErr != nil && !errors.Is(tarErr, io.ErrClosedPipe) {
 		return fmt.Errorf("extracting %s: %w", vmPathArg, tarErr)
@@ -278,5 +252,5 @@ func cmdExtract(args []string) error {
 	if len(args) == 2 {
 		dest = args[1]
 	}
-	return extractRun(args[0], dest, os.Stdout, os.Stderr)
+	return extractRun(args[0], dest, os.Stderr)
 }

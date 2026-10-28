@@ -33,7 +33,7 @@ func attachRun(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		return err
 	}
 	fmt.Fprintf(stderr, "attaching to vm %s …\n", vm.SandboxID)
-	return sshVM(creds, a, vm, sshArgs, stdin, stdout, stderr)
+	return enterVM(creds, vm, sshArgs, stdin, stdout, stderr)
 }
 
 // resolveAttachTarget picks the vm to enter: the one named by id, or the lone

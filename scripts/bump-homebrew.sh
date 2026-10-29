@@ -22,9 +22,13 @@ rm -f "$FORMULA.bak"
 echo "updated $FORMULA to $VERSION ($SHA)"
 
 if git -C "$TAP_DIR" rev-parse --git-dir >/dev/null 2>&1; then
-  git -C "$TAP_DIR" commit -aqm "zert $VERSION"
-  git -C "$TAP_DIR" push
-  echo "pushed bump commit"
+  if git -C "$TAP_DIR" diff --quiet && git -C "$TAP_DIR" diff --cached --quiet; then
+    echo "$FORMULA already at $VERSION; nothing to bump"
+  else
+    git -C "$TAP_DIR" commit -aqm "zert $VERSION"
+    git -C "$TAP_DIR" push
+    echo "pushed bump commit"
+  fi
 else
   echo "$TAP_DIR is not a git repo; skipped commit/push"
 fi

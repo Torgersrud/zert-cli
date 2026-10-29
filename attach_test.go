@@ -24,12 +24,7 @@ func TestAttachRunsInsideTmuxSession(t *testing.T) {
 	if !strings.Contains(line, "-t user@vma "+tmuxWrapCmd) {
 		t.Fatalf("attach did not enter the tmux session: %s", line)
 	}
-	fs.mu.Lock()
-	deleted := fs.deleted
-	fs.mu.Unlock()
-	if len(deleted) != 0 {
-		t.Fatalf("tmux detach must park the vm, not delete it, got %v", deleted)
-	}
+	assertNoVMDeleted(t, fs, "detaching from tmux")
 }
 
 func TestAttachExpiredVMExplainsItself(t *testing.T) {
@@ -46,9 +41,7 @@ func TestAttachExpiredVMExplainsItself(t *testing.T) {
 	if !strings.Contains(err.Error(), "start a new one") {
 		t.Fatalf("the expiry error must say to start a new one, got %v", err)
 	}
-	if _, err := os.Stat(logPath); err == nil {
-		t.Fatal("ssh spawned for an expired vm")
-	}
+	assertNoSSHSpawned(t, logPath, "an expired vm")
 }
 
 func TestAttachRejectsInvalidID(t *testing.T) {
@@ -64,9 +57,7 @@ func TestAttachRejectsInvalidID(t *testing.T) {
 	if _, statErr := os.Stat("/tmp/pwned"); statErr == nil {
 		t.Fatal("injection executed: /tmp/pwned exists")
 	}
-	if _, err := os.Stat(logPath); err == nil {
-		t.Fatal("ssh spawned despite an invalid vm id")
-	}
+	assertNoSSHSpawned(t, logPath, "an invalid vm id")
 }
 
 func TestAttachKeepWarnsObsolete(t *testing.T) {
@@ -102,9 +93,7 @@ func TestAttachNoLiveVM(t *testing.T) {
 	if err == nil || err.Error() != "no live vm — start one with `zert vm` or `zert <path>` first" {
 		t.Fatalf("want the house no-live-vm message, got %v", err)
 	}
-	if _, err := os.Stat(logPath); err == nil {
-		t.Fatal("ssh spawned despite no live vm")
-	}
+	assertNoSSHSpawned(t, logPath, "no live vm")
 }
 
 func TestAttachSeveralLiveVMsDemandID(t *testing.T) {
@@ -122,9 +111,7 @@ func TestAttachSeveralLiveVMsDemandID(t *testing.T) {
 			t.Fatalf("message must name the live vms to pick from, got %v", err)
 		}
 	}
-	if _, err := os.Stat(logPath); err == nil {
-		t.Fatal("ssh spawned despite an ambiguous vm choice")
-	}
+	assertNoSSHSpawned(t, logPath, "an ambiguous vm choice")
 }
 
 func TestAttachByIDWithSSHArgs(t *testing.T) {
@@ -152,16 +139,8 @@ func TestAttachByIDWithSSHArgs(t *testing.T) {
 	if !strings.Contains(line, "-t -L 8080:localhost:80 user@vmb") {
 		t.Fatalf("ssh args not forwarded verbatim before the destination: %s", line)
 	}
-	if !strings.Contains(logged, "TOKEN tok-9") {
-		t.Fatalf("token not passed via ZERT_TUNNEL_TOKEN env: %s", logged)
-	}
-	assertNoTokenInArgs(t, logged)
-	fs.mu.Lock()
-	deleted := fs.deleted
-	fs.mu.Unlock()
-	if len(deleted) != 0 {
-		t.Fatalf("attach must never kill the vm, got deletes %v", deleted)
-	}
+	assertTokenInChildEnvOnly(t, logged)
+	assertNoVMDeleted(t, fs, "attach")
 }
 
 // The id may land after ssh options or --keep: it must still pick the vm,
@@ -274,26 +253,10 @@ func TestAttachSingleLiveVM(t *testing.T) {
 		t.Fatal(err)
 	}
 	logged := readLog(t, logPath)
-	if !strings.Contains(logged, "ARGS -o ProxyCommand=") || !strings.Contains(logged, "tunnel vma") {
-		t.Fatalf("ProxyCommand missing from ssh argv: %s", logged)
-	}
-	if !strings.Contains(logged, "user@vma") {
-		t.Fatalf("ssh destination missing: %s", logged)
-	}
-	if !strings.Contains(logged, "-o ServerAliveInterval=30") || !strings.Contains(logged, "-o ServerAliveCountMax=4") {
-		t.Fatalf("ssh keepalive options missing: %s", logged)
-	}
-	if !strings.Contains(logged, "TOKEN tok-9") {
-		t.Fatalf("token not passed via ZERT_TUNNEL_TOKEN env: %s", logged)
-	}
-	assertNoTokenInArgs(t, logged)
+	assertSSHCommonOptions(t, logged, "vma")
+	assertTokenInChildEnvOnly(t, logged)
 	if n := len(argLines(logged)); n != 1 {
 		t.Fatalf("want exactly one ssh call, got %d in %s", n, logged)
 	}
-	fs.mu.Lock()
-	deleted := fs.deleted
-	fs.mu.Unlock()
-	if len(deleted) != 0 {
-		t.Fatalf("attach must never kill the vm, got deletes %v", deleted)
-	}
+	assertNoVMDeleted(t, fs, "attach")
 }

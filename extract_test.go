@@ -17,27 +17,8 @@ import (
 	"time"
 )
 
-// fakeSSHStreamingStdout is fakeSSH with the data direction flipped: instead
-// of swallowing stdin it replays the file at $FAKE_SSH_STDOUT (a prepared
-// tar.gz) on stdout, which is the pipe the CLI untars. The caller must set
-// FAKE_SSH_STDOUT before calling.
-func fakeSSHStreamingStdout(t *testing.T) string {
-	t.Helper()
-	path := filepath.Join(t.TempDir(), "fake-ssh")
-	script := "#!/bin/sh\n" +
-		"printf '%s\\n' \"ARGS $*\" >> \"$FAKE_SSH_LOG\"\n" +
-		"printf '%s\\n' \"TOKEN $ZERT_TUNNEL_TOKEN\" >> \"$FAKE_SSH_LOG\"\n" +
-		"cat \"$FAKE_SSH_STDOUT\"\n" +
-		"exit ${FAKE_SSH_EXIT:-0}\n"
-	if err := os.WriteFile(path, []byte(script), 0755); err != nil {
-		t.Fatal(err)
-	}
-	logPath := filepath.Join(t.TempDir(), "ssh.log")
-	t.Setenv("FAKE_SSH_LOG", logPath)
-	t.Cleanup(func() { sshPath = "ssh" })
-	sshPath = path
-	return logPath
-}
+// The fake-ssh generator and the shared Entry-path assertions used below live
+// in helpers_test.go; the tar fixtures here stay, they are extract's own.
 
 // tarEntry is one member of the fake vm-side tar streams below.
 type tarEntry struct {
@@ -118,7 +99,7 @@ func TestExtractHappyPath(t *testing.T) {
 	}
 	dest := t.TempDir()
 
-	if err := extractRun("~/out", dest, os.Stdout, os.Stderr); err != nil {
+	if err := extractRun("~/out", dest, os.Stderr); err != nil {
 		t.Fatal(err)
 	}
 	b, err := os.ReadFile(filepath.Join(dest, "out", "a.txt"))
@@ -133,34 +114,25 @@ func TestExtractHappyPath(t *testing.T) {
 		t.Fatalf("exec bit lost: mode=%v", st.Mode())
 	}
 	logged := readLog(t, logPath)
-	if !strings.Contains(logged, "tunnel vmlive") {
-		t.Fatalf("ProxyCommand missing from ssh argv: %s", logged)
-	}
-	if !strings.Contains(logged, "user@vmlive") || !strings.Contains(logged, "-czf -") {
-		t.Fatalf("ssh destination or remote tar command missing: %s", logged)
+	assertSSHCommonOptions(t, logged, "vmlive")
+	if !strings.Contains(logged, "-czf -") {
+		t.Fatalf("remote tar command missing: %s", logged)
 	}
 	// ~/out splits to dir ~ base out; ~ stays unquoted so the remote shell
 	// expands it, base is quoted
 	if !strings.Contains(logged, `-C ~ -- 'out'`) {
 		t.Fatalf("remote tar -C/base wrong: %s", logged)
 	}
-	if !strings.Contains(logged, "TOKEN tok-9") {
-		t.Fatalf("token not passed via ZERT_TUNNEL_TOKEN env: %s", logged)
-	}
-	assertNoTokenInArgs(t, logged)
-	// extract is a non-interactive stream: it never lands in tmux
-	if strings.Contains(logged, "tmux") {
-		t.Fatalf("tmux leaked into the extract ssh argv: %s", logged)
+	assertTokenInChildEnvOnly(t, logged)
+	// extract is a non-interactive stream: it never lands in tmux and never
+	// asks ssh for a tty
+	if strings.Contains(logged, "tmux") || strings.Contains(logged, " -t ") {
+		t.Fatalf("tmux or a forced -t leaked into the extract ssh argv: %s", logged)
 	}
 	if n := len(argLines(logged)); n != 1 {
 		t.Fatalf("extract must spawn exactly one ssh, got %d: %s", n, logged)
 	}
-	fs.mu.Lock()
-	deleted := fs.deleted
-	fs.mu.Unlock()
-	if len(deleted) != 0 {
-		t.Fatalf("extract must never kill the vm, got deletes %v", deleted)
-	}
+	assertNoVMDeleted(t, fs, "extract")
 }
 
 func TestExtractCreatesDestDir(t *testing.T) {
@@ -172,7 +144,7 @@ func TestExtractCreatesDestDir(t *testing.T) {
 	fs.live = []string{"vmlive"}
 	dest := filepath.Join(t.TempDir(), "new", "nested")
 
-	if err := extractRun("~/report.txt", dest, os.Stdout, os.Stderr); err != nil {
+	if err := extractRun("~/report.txt", dest, os.Stderr); err != nil {
 		t.Fatal(err)
 	}
 	b, err := os.ReadFile(filepath.Join(dest, "report.txt"))
@@ -190,13 +162,11 @@ func TestExtractNoLiveVM(t *testing.T) {
 		http.Error(w, `{"detail":"no"}`, 500)
 	}
 
-	err := extractRun("~/out", t.TempDir(), os.Stdout, os.Stderr)
+	err := extractRun("~/out", t.TempDir(), os.Stderr)
 	if err == nil || !strings.Contains(err.Error(), "no live vm") {
 		t.Fatalf("want no-live-vm error, got %v", err)
 	}
-	if _, statErr := os.Stat(logPath); statErr == nil {
-		t.Fatal("ssh spawned despite no live vm")
-	}
+	assertNoSSHSpawned(t, logPath, "no live vm")
 }
 
 func TestExtractTarSlipRefused(t *testing.T) {
@@ -211,7 +181,7 @@ func TestExtractTarSlipRefused(t *testing.T) {
 		t.Setenv("FAKE_SSH_STDOUT", tarPath)
 		fakeSSHStreamingStdout(t)
 
-		err := extractRun("~/out", dest, os.Stdout, os.Stderr)
+		err := extractRun("~/out", dest, os.Stderr)
 		if err == nil || !strings.Contains(err.Error(), "traversal") || !strings.Contains(err.Error(), "../evil") {
 			t.Fatalf("want traversal refusal, got %v", err)
 		}
@@ -224,7 +194,7 @@ func TestExtractTarSlipRefused(t *testing.T) {
 		t.Setenv("FAKE_SSH_STDOUT", tarPath)
 		fakeSSHStreamingStdout(t)
 
-		err := extractRun("~/out", t.TempDir(), os.Stdout, os.Stderr)
+		err := extractRun("~/out", t.TempDir(), os.Stderr)
 		if err == nil || !strings.Contains(err.Error(), "absolute") || !strings.Contains(err.Error(), "/abs") {
 			t.Fatalf("want absolute-path refusal, got %v", err)
 		}
@@ -243,7 +213,7 @@ func TestExtractSymlinkSkipped(t *testing.T) {
 	fs.live = []string{"vmlive"}
 	dest := t.TempDir()
 
-	if err := extractRun("~/out", dest, os.Stdout, os.Stderr); err != nil {
+	if err := extractRun("~/out", dest, os.Stderr); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Lstat(filepath.Join(dest, "out", "link")); err == nil {
@@ -264,7 +234,7 @@ func TestExtractSingleFile(t *testing.T) {
 	dest := t.TempDir()
 
 	// bare name (no slash) resolves against the vm home, i.e. -C ~ (unquoted)
-	if err := extractRun("note.txt", dest, os.Stdout, os.Stderr); err != nil {
+	if err := extractRun("note.txt", dest, os.Stderr); err != nil {
 		t.Fatal(err)
 	}
 	b, err := os.ReadFile(filepath.Join(dest, "note.txt"))
@@ -286,7 +256,7 @@ func TestExtractBadRemotePathNoNetwork(t *testing.T) {
 	setupHome(t, ts.URL)
 	fakeSSH(t)
 
-	if err := extractRun("a;b", t.TempDir(), os.Stdout, os.Stderr); err == nil {
+	if err := extractRun("a;b", t.TempDir(), os.Stderr); err == nil {
 		t.Fatal("expected error for bad vm path")
 	}
 	if n := atomic.LoadInt32(&hits); n != 0 {
@@ -399,7 +369,7 @@ func TestExtractSSHFailureExitCode(t *testing.T) {
 	fs.live = []string{"vmlive"}
 
 	// ssh's exit code must win over any downstream stream fallout
-	err := extractRun("~/note.txt", t.TempDir(), os.Stdout, os.Stderr)
+	err := extractRun("~/note.txt", t.TempDir(), os.Stderr)
 	var ee *exitError
 	if !errors.As(err, &ee) || ee.code != 1 {
 		t.Fatalf("want exit 1, got %v", err)
@@ -416,7 +386,7 @@ func TestExtractDefaultDestCwd(t *testing.T) {
 	cwd := t.TempDir()
 	t.Chdir(cwd)
 
-	if err := extractRun("~/note.txt", "", os.Stdout, os.Stderr); err != nil {
+	if err := extractRun("~/note.txt", "", os.Stderr); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(cwd, "note.txt")); err != nil {

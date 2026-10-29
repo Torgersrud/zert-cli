@@ -10,136 +10,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 )
 
-type fakeServer struct {
-	*httptest.Server
-	mu          sync.Mutex
-	deleted     []string
-	keyUploaded string
-	pubkey      *string        // what /v1/me reports
-	live        []string       // sandbox ids reported as live by GET /v1/vm
-	expired     []string       // sandbox ids reported as not live by GET /v1/vm
-	deleteFail  map[string]int // id -> status code for failing DELETEs
-	create      func(w http.ResponseWriter, tries int)
-}
-
-func newFakeServer(t *testing.T) *fakeServer {
-	t.Helper()
-	fs := &fakeServer{pubkey: strptr("ssh-ed25519 AAAAC3 serverkey bob")}
-	var muCreateMu sync.Mutex
-	creates := 0
-	mux := http.NewServeMux()
-	mux.HandleFunc("/v1/me", func(w http.ResponseWriter, r *http.Request) {
-		fs.mu.Lock()
-		pub := fs.pubkey
-		fs.mu.Unlock()
-		json.NewEncoder(w).Encode(map[string]any{
-			"email": "bob@example.com", "ssh_pubkey": pub, "quota": 1,
-		})
-	})
-	mux.HandleFunc("/v1/me/key", func(w http.ResponseWriter, r *http.Request) {
-		var body map[string]string
-		json.NewDecoder(r.Body).Decode(&body)
-		fs.mu.Lock()
-		fs.keyUploaded = body["pubkey"]
-		fs.mu.Unlock()
-		json.NewEncoder(w).Encode(map[string]bool{"ok": true})
-	})
-	mux.HandleFunc("/v1/vm", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == "POST" {
-			muCreateMu.Lock()
-			creates++
-			n := creates
-			muCreateMu.Unlock()
-			if fs.create != nil {
-				fs.create(w, n)
-				return
-			}
-			w.WriteHeader(201)
-			json.NewEncoder(w).Encode(map[string]any{
-				"sandbox_id": "vm123", "expires_at": json.Number("9999999999"),
-			})
-			return
-		}
-		fs.mu.Lock()
-		var rows []map[string]any
-		for _, id := range fs.live {
-			rows = append(rows, map[string]any{
-				"sandbox_id": id, "expires_at": 9999999999.0, "live": true,
-			})
-		}
-		for _, id := range fs.expired {
-			rows = append(rows, map[string]any{
-				"sandbox_id": id, "expires_at": 1.0, "live": false,
-			})
-		}
-		fs.mu.Unlock()
-		if rows == nil {
-			rows = []map[string]any{}
-		}
-		json.NewEncoder(w).Encode(rows)
-	})
-	mux.HandleFunc("/v1/vm/", func(w http.ResponseWriter, r *http.Request) {
-		id := strings.TrimPrefix(r.URL.Path, "/v1/vm/")
-		fs.mu.Lock()
-		fs.deleted = append(fs.deleted, id)
-		code := fs.deleteFail[id]
-		fs.mu.Unlock()
-		if code != 0 {
-			http.Error(w, `{"detail":"kill refused"}`, code)
-			return
-		}
-		json.NewEncoder(w).Encode(map[string]string{"killed": "vm123"})
-	})
-	fs.Server = httptest.NewServer(mux)
-	t.Cleanup(fs.Close)
-	return fs
-}
-
-func strptr(s string) *string { return &s }
-
-// setupHome points HOME/XDG at temp dirs and stores credentials for the fake API.
-func setupHome(t *testing.T, host string) string {
-	t.Helper()
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
-	if err := saveCredentials(&Credentials{Host: host, Email: "bob@example.com", Token: "tok-9"}); err != nil {
-		t.Fatal(err)
-	}
-	return home
-}
-
-// fakeSSH records argv + tunnel token env, exits with code from FAKE_SSH_EXIT.
-func fakeSSH(t *testing.T) string {
-	t.Helper()
-	path := filepath.Join(t.TempDir(), "fake-ssh")
-	script := "#!/bin/sh\n" +
-		"printf '%s\\n' \"ARGS $*\" >> \"$FAKE_SSH_LOG\"\n" +
-		"printf '%s\\n' \"TOKEN $ZERT_TUNNEL_TOKEN\" >> \"$FAKE_SSH_LOG\"\n" +
-		"cat > /dev/null\n" +
-		"exit ${FAKE_SSH_EXIT:-0}\n"
-	if err := os.WriteFile(path, []byte(script), 0755); err != nil {
-		t.Fatal(err)
-	}
-	logPath := filepath.Join(t.TempDir(), "ssh.log")
-	t.Setenv("FAKE_SSH_LOG", logPath)
-	t.Cleanup(func() { sshPath = "ssh" })
-	sshPath = path
-	return logPath
-}
-
-func readLog(t *testing.T, path string) string {
-	t.Helper()
-	b, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(b)
-}
+// The API fake, the fake-ssh generator, the tmux wrap literal and the shared
+// Entry-path assertions this suite uses live in helpers_test.go.
 
 func TestVMExitNeverKills(t *testing.T) {
 	fs := newFakeServer(t)
@@ -149,33 +24,10 @@ func TestVMExitNeverKills(t *testing.T) {
 	if err := vmRun(nil, strings.NewReader(""), os.Stdout, os.Stderr); err != nil {
 		t.Fatal(err)
 	}
-	fs.mu.Lock()
-	deleted := fs.deleted
-	fs.mu.Unlock()
-	if len(deleted) != 0 {
-		t.Fatalf("exit must never kill the vm, got deletes %v", deleted)
-	}
+	assertNoVMDeleted(t, fs, "leaving an entered vm")
 	logged := readLog(t, logPath)
-	if !strings.Contains(logged, "ARGS -o ProxyCommand=") || !strings.Contains(logged, "tunnel vm123") {
-		t.Fatalf("ProxyCommand missing from ssh argv: %s", logged)
-	}
-	if !strings.Contains(logged, "user@vm123") {
-		t.Fatalf("ssh destination missing: %s", logged)
-	}
-	if !strings.Contains(logged, "-o ServerAliveInterval=30") || !strings.Contains(logged, "-o ServerAliveCountMax=4") {
-		t.Fatalf("ssh keepalive options missing: %s", logged)
-	}
-	if !strings.Contains(logged, "TOKEN tok-9") {
-		t.Fatalf("token not passed via ZERT_TUNNEL_TOKEN env: %s", logged)
-	}
-	if strings.Contains(logged, "tok-9 ") && strings.Contains(logged, "TOKEN ") {
-		// token must be in env line only, never in args
-		for _, line := range strings.Split(logged, "\n") {
-			if strings.HasPrefix(line, "ARGS") && strings.Contains(line, "tok-9") {
-				t.Fatalf("token leaked into ssh argv: %s", line)
-			}
-		}
-	}
+	assertSSHCommonOptions(t, logged, "vm123")
+	assertTokenInChildEnvOnly(t, logged)
 }
 
 func TestVMKeepWarnsObsoleteAndNeverKills(t *testing.T) {
@@ -193,12 +45,7 @@ func TestVMKeepWarnsObsoleteAndNeverKills(t *testing.T) {
 	if !strings.Contains(stderr.String(), "no longer die on exit") {
 		t.Fatalf("notice must say vms no longer die on exit, got %q", stderr.String())
 	}
-	fs.mu.Lock()
-	deleted := fs.deleted
-	fs.mu.Unlock()
-	if len(deleted) != 0 {
-		t.Fatalf("--keep must not DELETE, got %v", deleted)
-	}
+	assertNoVMDeleted(t, fs, "--keep")
 }
 
 func TestVMExitCodeNeverKills(t *testing.T) {
@@ -212,28 +59,7 @@ func TestVMExitCodeNeverKills(t *testing.T) {
 	if !errors.As(err, &ee) || ee.code != 255 {
 		t.Fatalf("want exit 255 propagated, got %v", err)
 	}
-	fs.mu.Lock()
-	deleted := fs.deleted
-	fs.mu.Unlock()
-	if len(deleted) != 0 {
-		t.Fatalf("ssh exit %d must never kill the vm, got deletes %v", ee.code, deleted)
-	}
-}
-
-// tmuxWrapCmd is the remote command every interactive entry runs, pinned
-// verbatim: enter/attach the one tmux session "zert" when the guest has
-// tmux, plain login shell when it does not (a vm from the pre-tmux
-// Template). It is the contract, so the test owns the literal — and the
-// literal is a deliberate byte-for-byte duplicate of vm.go's
-// interactiveRemoteCmd: if you change one, edit both literals together.
-const tmuxWrapCmd = `command -v tmux >/dev/null 2>&1 && exec tmux new -As zert || exec "${SHELL:-sh}" -l`
-
-// fakeTTY makes stdinIsInteractive report a terminal — a test binary's
-// stdin never is one — so the interactive paths can pin their tmux wrap.
-func fakeTTY(t *testing.T) {
-	t.Helper()
-	t.Cleanup(func() { stdinIsInteractive = defaultStdinIsInteractive })
-	stdinIsInteractive = func() bool { return true }
+	assertNoVMDeleted(t, fs, "ssh exiting 255")
 }
 
 func TestVMInteractiveEntryRunsTmuxWrap(t *testing.T) {
@@ -422,9 +248,7 @@ func TestVMNoSpawnOnMaliciousID(t *testing.T) {
 	if err := vmRun([]string{"--keep"}, strings.NewReader(""), os.Stdout, io.Discard); err == nil {
 		t.Fatal("expected error from malicious id")
 	}
-	if _, err := os.Stat(logPath); err == nil {
-		t.Fatal("ssh spawned despite invalid vm id")
-	}
+	assertNoSSHSpawned(t, logPath, "an invalid vm id")
 }
 
 func TestVMQuota409ShowsList(t *testing.T) {

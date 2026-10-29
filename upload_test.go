@@ -9,61 +9,17 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
+	"time"
 )
 
-// fakeSSHRecordingStdin is fakeSSH plus it stores ssh's full stdin (the
-// tar.gz stream) at the returned path.
-func fakeSSHRecordingStdin(t *testing.T) (logPath, stdinPath string) {
-	t.Helper()
-	path := filepath.Join(t.TempDir(), "fake-ssh")
-	script := "#!/bin/sh\n" +
-		"printf '%s\\n' \"ARGS $*\" >> \"$FAKE_SSH_LOG\"\n" +
-		"printf '%s\\n' \"TOKEN $ZERT_TUNNEL_TOKEN\" >> \"$FAKE_SSH_LOG\"\n" +
-		"cat > \"$FAKE_SSH_STDIN\"\n" +
-		"exit ${FAKE_SSH_EXIT:-0}\n"
-	if err := os.WriteFile(path, []byte(script), 0755); err != nil {
-		t.Fatal(err)
-	}
-	logPath = filepath.Join(t.TempDir(), "ssh.log")
-	stdinPath = filepath.Join(t.TempDir(), "stdin.tar.gz")
-	t.Setenv("FAKE_SSH_LOG", logPath)
-	t.Setenv("FAKE_SSH_STDIN", stdinPath)
-	t.Cleanup(func() { sshPath = "ssh" })
-	sshPath = path
-	return logPath, stdinPath
-}
-
-func tempDirNamed(t *testing.T, name string) string {
-	t.Helper()
-	dir := filepath.Join(t.TempDir(), name)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	return dir
-}
-
-func assertNoTokenInArgs(t *testing.T, logged string) {
-	t.Helper()
-	for _, line := range strings.Split(logged, "\n") {
-		if strings.HasPrefix(line, "ARGS") && strings.Contains(line, "tok-9") {
-			t.Fatalf("token leaked into ssh argv: %s", line)
-		}
-	}
-}
-
-func argLines(logged string) []string {
-	var out []string
-	for _, line := range strings.Split(logged, "\n") {
-		if strings.HasPrefix(line, "ARGS ") {
-			out = append(out, line)
-		}
-	}
-	return out
-}
+// The fake-ssh generators and the shared Entry-path assertions used below
+// live in helpers_test.go.
 
 // untarGz decodes a recorded upload stream into name -> entry maps.
 func untarGz(t *testing.T, path string) map[string]tar.Header {
@@ -101,30 +57,17 @@ func TestUploadCreatesVMWhenNoneLive(t *testing.T) {
 		t.Fatal(err)
 	}
 	logged := readLog(t, logPath)
-	if !strings.Contains(logged, "tunnel vm123") {
-		t.Fatalf("ProxyCommand missing from ssh argv: %s", logged)
+	assertSSHCommonOptions(t, logged, "vm123")
+	if !strings.Contains(logged, uploadRemoteCmd) {
+		t.Fatalf("remote tar command missing: %s", logged)
 	}
-	if !strings.Contains(logged, "user@vm123") || !strings.Contains(logged, uploadRemoteCmd) {
-		t.Fatalf("ssh destination or remote tar command missing: %s", logged)
-	}
-	if !strings.Contains(logged, "-o ServerAliveInterval=30") || !strings.Contains(logged, "-o ServerAliveCountMax=4") {
-		t.Fatalf("ssh keepalive options missing: %s", logged)
-	}
-	if !strings.Contains(logged, "TOKEN tok-9") {
-		t.Fatalf("token not passed via ZERT_TUNNEL_TOKEN env: %s", logged)
-	}
-	assertNoTokenInArgs(t, logged)
+	assertTokenInChildEnvOnly(t, logged)
 	for _, line := range argLines(logged) {
 		if strings.Contains(line, dir) {
 			t.Fatalf("local path leaked into ssh argv: %s", line)
 		}
 	}
-	fs.mu.Lock()
-	deleted := fs.deleted
-	fs.mu.Unlock()
-	if len(deleted) != 0 {
-		t.Fatalf("exit must never kill the vm, got deletes %v", deleted)
-	}
+	assertNoVMDeleted(t, fs, "an upload and the entry after it")
 }
 
 func TestUploadCreatedVmAutoSshes(t *testing.T) {
@@ -137,9 +80,7 @@ func TestUploadCreatedVmAutoSshes(t *testing.T) {
 		t.Fatal(err)
 	}
 	logged := readLog(t, logPath)
-	if !strings.Contains(logged, "TOKEN tok-9") {
-		t.Fatalf("token not passed via ZERT_TUNNEL_TOKEN env: %s", logged)
-	}
+	assertTokenInChildEnvOnly(t, logged)
 	// the first ssh exec carries the tar, the auto-ssh one must not
 	var plain bool
 	for _, line := range argLines(logged) {
@@ -150,12 +91,7 @@ func TestUploadCreatedVmAutoSshes(t *testing.T) {
 	if !plain {
 		t.Fatalf("no auto-ssh (interactive) session after upload: %s", logged)
 	}
-	fs.mu.Lock()
-	deleted := fs.deleted
-	fs.mu.Unlock()
-	if len(deleted) != 0 {
-		t.Fatalf("exit after auto-ssh must never kill the vm, got deletes %v", deleted)
-	}
+	assertNoVMDeleted(t, fs, "the entry after an upload")
 }
 
 func TestUploadEntryRunsTmuxCopyStreamNever(t *testing.T) {
@@ -172,8 +108,9 @@ func TestUploadEntryRunsTmuxCopyStreamNever(t *testing.T) {
 	if len(lines) != 2 {
 		t.Fatalf("want tar + interactive ssh, got %d lines: %v", len(lines), lines)
 	}
-	if strings.Contains(lines[0], "tmux") || !strings.Contains(lines[0], uploadRemoteCmd) {
-		t.Fatalf("the copy stream must never see tmux: %s", lines[0])
+	if strings.Contains(lines[0], "tmux") || strings.Contains(lines[0], " -t ") ||
+		!strings.Contains(lines[0], uploadRemoteCmd) {
+		t.Fatalf("the copy stream must never see tmux or a forced -t: %s", lines[0])
 	}
 	if !strings.Contains(lines[1], "user@vm123 "+tmuxWrapCmd) {
 		t.Fatalf("the post-copy entry must run inside the tmux session: %s", lines[1])
@@ -217,13 +154,8 @@ func TestUploadSSHArgsForwarded(t *testing.T) {
 	if !strings.Contains(logged, "-L 8080:localhost:80 user@vm123") {
 		t.Fatalf("user ssh args not forwarded before destination: %s", logged)
 	}
-	assertNoTokenInArgs(t, logged)
-	fs.mu.Lock()
-	deleted := fs.deleted
-	fs.mu.Unlock()
-	if len(deleted) != 0 {
-		t.Fatalf("exit must never kill the vm, got deletes %v", deleted)
-	}
+	assertTokenInChildEnvOnly(t, logged)
+	assertNoVMDeleted(t, fs, "an upload with user ssh args")
 }
 
 func TestUploadKeepWarnsObsoleteAndNeverKills(t *testing.T) {
@@ -253,12 +185,7 @@ func TestUploadKeepWarnsObsoleteAndNeverKills(t *testing.T) {
 	if !plain {
 		t.Fatalf("--keep must still enter the vm: %s", readLog(t, logPath))
 	}
-	fs.mu.Lock()
-	deleted := fs.deleted
-	fs.mu.Unlock()
-	if len(deleted) != 0 {
-		t.Fatalf("--keep must not DELETE, got %v", deleted)
-	}
+	assertNoVMDeleted(t, fs, "--keep")
 }
 
 func TestUploadLiveVMWithArgsEntersNoKill(t *testing.T) {
@@ -283,12 +210,7 @@ func TestUploadLiveVMWithArgsEntersNoKill(t *testing.T) {
 	if n := len(argLines(logged)); n != 2 {
 		t.Fatalf("expected exactly tar + interactive ssh, got %d: %s", n, logged)
 	}
-	fs.mu.Lock()
-	deleted := fs.deleted
-	fs.mu.Unlock()
-	if len(deleted) != 0 {
-		t.Fatalf("live vm must never be killed after entering, got %v", deleted)
-	}
+	assertNoVMDeleted(t, fs, "entering a live vm after an upload")
 }
 
 func TestUploadLiveVMKeepChangesNothing(t *testing.T) {
@@ -312,12 +234,7 @@ func TestUploadLiveVMKeepChangesNothing(t *testing.T) {
 	if n := strings.Count(stderr, "obsolete"); n != 1 {
 		t.Fatalf("want exactly one --keep deprecation notice on stderr, got %d in %q", n, stderr)
 	}
-	fs.mu.Lock()
-	deleted := fs.deleted
-	fs.mu.Unlock()
-	if len(deleted) != 0 {
-		t.Fatalf("live vm must never be killed, got %v", deleted)
-	}
+	assertNoVMDeleted(t, fs, "--keep on an already-running vm")
 }
 
 func TestUploadPubkeyBootstrap(t *testing.T) {
@@ -359,12 +276,58 @@ func TestUploadSSHFailureExitCode(t *testing.T) {
 	if !errors.As(err, &ee) || ee.code != 1 {
 		t.Fatalf("want exit 1, got %v", err)
 	}
-	fs.mu.Lock()
-	deleted := fs.deleted
-	fs.mu.Unlock()
-	if len(deleted) != 0 {
-		t.Fatalf("failed ssh must never kill the vm, got deletes %v", deleted)
+	assertNoVMDeleted(t, fs, "ssh that fails")
+}
+
+func TestUploadCopyStreamForwardsSIGINTToSSH(t *testing.T) {
+	fs := newFakeServer(t)
+	fs.live = []string{"vmlive"}
+	setupHome(t, fs.URL)
+	logPath := fakeSSHBlockingUntilSignal(t)
+
+	dir := tempDirNamed(t, "mydir")
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("hello"), 0644); err != nil {
+		t.Fatal(err)
 	}
+
+	// While this test raises the signal, keep the default "SIGINT kills the
+	// process" off the test binary: this guard channel absorbs an interrupt
+	// the exec path does not forward, so the regression fails the assertion
+	// below instead of killing the suite. The Stop returns the process to
+	// its default behaviour, leaving no handler registered for later tests.
+	guard := make(chan os.Signal, 1)
+	signal.Notify(guard, syscall.SIGINT)
+	t.Cleanup(func() { signal.Stop(guard) })
+
+	done := make(chan error, 1)
+	go func() {
+		done <- uploadRun(dir, nil, strings.NewReader(""), io.Discard, io.Discard)
+	}()
+
+	// the Ctrl-C of a customer watching a long copy upload: the signal goes
+	// to this process, exactly as a terminal sends it to zert — forwarding
+	// is what the module under test must do from there
+	awaitFakeSSHReady(t, logPath)
+	if err := syscall.Kill(os.Getpid(), syscall.SIGINT); err != nil {
+		t.Fatal(err)
+	}
+
+	var err error
+	select {
+	case err = <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("upload never stopped after its ssh child was interrupted")
+	}
+
+	if logged := readLog(t, logPath); !strings.Contains(logged, "SIGNAL SIGINT") {
+		t.Fatalf("SIGINT raised during the copy never reached the ssh child: %s", logged)
+	}
+	// and the run stops cleanly: ssh's interrupted exit code reaches the caller
+	var ee *exitError
+	if !errors.As(err, &ee) || ee.code != 130 {
+		t.Fatalf("want interrupted ssh's exit 130, got %v", err)
+	}
+	assertNoVMDeleted(t, fs, "an interrupted upload")
 }
 
 func TestUploadTarStreamContents(t *testing.T) {
@@ -475,15 +438,8 @@ func TestUploadMetacharNameRefused(t *testing.T) {
 	if !strings.Contains(err.Error(), "rename") || !strings.Contains(err.Error(), "archive") {
 		t.Fatalf("error should mention rename/archive, got: %v", err)
 	}
-	if _, statErr := os.Stat(logPath); statErr == nil {
-		t.Fatal("ssh spawned despite bad file name")
-	}
-	fs.mu.Lock()
-	deleted := fs.deleted
-	fs.mu.Unlock()
-	if len(deleted) != 0 {
-		t.Fatalf("no vm operations expected, got deletes %v", deleted)
-	}
+	assertNoSSHSpawned(t, logPath, "a shell metacharacter in the name")
+	assertNoVMDeleted(t, fs, "a refused upload")
 }
 
 func TestUploadBadNameNoNetwork(t *testing.T) {
@@ -517,15 +473,8 @@ func TestUploadRefusesRoot(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "root") {
 		t.Fatalf("expected root refusal, got %v", err)
 	}
-	if _, statErr := os.Stat(logPath); statErr == nil {
-		t.Fatal("ssh spawned despite root upload")
-	}
-	fs.mu.Lock()
-	deleted := fs.deleted
-	fs.mu.Unlock()
-	if len(deleted) != 0 {
-		t.Fatalf("no vm operations expected, got deletes %v", deleted)
-	}
+	assertNoSSHSpawned(t, logPath, "an upload of the root directory")
+	assertNoVMDeleted(t, fs, "a refused upload")
 }
 
 func TestUploadRefusesHome(t *testing.T) {
@@ -537,9 +486,7 @@ func TestUploadRefusesHome(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "home directory") {
 		t.Fatalf("expected home refusal, got %v", err)
 	}
-	if _, statErr := os.Stat(logPath); statErr == nil {
-		t.Fatal("ssh spawned despite home upload")
-	}
+	assertNoSSHSpawned(t, logPath, "an upload of the home directory")
 }
 
 func keys(m map[string]tar.Header) []string {

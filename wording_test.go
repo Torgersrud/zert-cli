@@ -25,3 +25,12 @@ func TestVMExpiredWording(t *testing.T) {
 		t.Fatalf("vm-expired wording = %q, want %q", got, want)
 	}
 }
+
+// The id guard kill and tunnel share: a word that is neither the stable
+// name nor a valid id is refused before any ask is made — the "same guard
+// as kill and tunnel" comment, made code.
+func TestInvalidVMIDWording(t *testing.T) {
+	if got, want := errInvalidVMID.Error(), "invalid vm id"; got != want {
+		t.Fatalf("invalid-id wording = %q, want %q", got, want)
+	}
+}

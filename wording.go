@@ -18,4 +18,9 @@ var (
 	// vm` is the way back — one wording for every path that meets a
 	// dead machine, never one per path.
 	errVMExpired = errors.New("vm expired — start a new one with `zert vm`")
+
+	// errInvalidVMID is the id guard kill and tunnel share: a word that
+	// is neither the stable name nor a valid id is refused before any
+	// ask is made.
+	errInvalidVMID = errors.New("invalid vm id")
 )

@@ -228,7 +228,7 @@ func cmdTunnel(args []string) error {
 	}
 	id := fs.Arg(0)
 	if id != tunnelMe && !validSandboxID(id) {
-		return errors.New("invalid vm id")
+		return errInvalidVMID
 	}
 	host, token, err := resolveTunnelTarget()
 	if err != nil {

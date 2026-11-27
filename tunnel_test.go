@@ -500,6 +500,44 @@ func TestTunnelMeRefusalPassesThrough(t *testing.T) {
 	}
 }
 
+// TestTunnelMeQuotaShowsTheWayForward pins story 11's tunnel half: the
+// stable name's silence covers the outcome story only. A quota refusal
+// carries a way forward — the whole listing and the hint — and it must
+// reach this command's own error stream even here, where success renders
+// nothing: the Customer behind the ssh config learns what is theirs and
+// how a slot frees, never a silent hang.
+func TestTunnelMeQuotaShowsTheWayForward(t *testing.T) {
+	fs := newFakeServer(t)
+	fs.live = []string{"vmQ"} // the quota is reached: a machine is live
+	fs.create = func(w http.ResponseWriter, _ int) {
+		http.Error(w, `{"detail":"quota reached (1 live VM)"}`, 409)
+	}
+	setupHome(t, fs.URL)
+
+	_, errOut, err := driveTunnel(t, []string{"me"}, "")
+	if err == nil || !strings.Contains(err.Error(), "quota reached") {
+		t.Fatalf("the refusal must pass through as its message, got %v", err)
+	}
+	if !strings.Contains(errOut, "quota reached (1 live VM)") {
+		t.Fatalf("the door's refusal message must reach the command's error stream, got %q", errOut)
+	}
+	if !strings.Contains(errOut, "your VMs:") || !strings.Contains(errOut, "vmQ") {
+		t.Fatalf("the quota listing must reach the command's error stream, got %q", errOut)
+	}
+	if !strings.Contains(errOut, "zert kill <id>") {
+		t.Fatalf("the way forward must reach the command's error stream, got %q", errOut)
+	}
+	fs.mu.Lock()
+	asks, paths := fs.ensureAsks, append([]string(nil), fs.tunnelPaths...)
+	fs.mu.Unlock()
+	if asks != 1 {
+		t.Fatalf("a refusal is final: want 1 ask, got %d", asks)
+	}
+	if len(paths) != 0 {
+		t.Fatalf("a refused ask must open no relay, dialled %v", paths)
+	}
+}
+
 // TestTunnelRawIDIsUntouched pins the escape hatch: a raw id dials the
 // relay exactly as before — no ensure ask — the sentinel is the one word
 // `me` and nothing else, and anything that is neither a valid id nor the

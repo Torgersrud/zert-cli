@@ -20,6 +20,7 @@ package main
 // path fails the suite.
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -30,6 +31,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/coder/websocket"
 )
 
 // --- the API fake -------------------------------------------------------
@@ -51,6 +54,12 @@ type fakeServer struct {
 	// ensure request contract").
 	ensureAsks int
 	placed     []string
+	// the door's relay route, recorded the same way: tunnelPaths is every
+	// WS path the relay answered — which id was dialled — and tunnelAuth
+	// is the authorization header the dial carried, where the token must
+	// ride and nowhere else.
+	tunnelPaths []string
+	tunnelAuth  string
 }
 
 func newFakeServer(t *testing.T) *fakeServer {
@@ -144,6 +153,25 @@ func newFakeServer(t *testing.T) *fakeServer {
 			return
 		}
 		json.NewEncoder(w).Encode(map[string]string{"killed": "vm123"})
+	})
+	mux.HandleFunc("/v1/tunnel/", func(w http.ResponseWriter, r *http.Request) {
+		fs.mu.Lock()
+		fs.tunnelPaths = append(fs.tunnelPaths, r.URL.Path)
+		fs.tunnelAuth = r.Header.Get("authorization")
+		fs.mu.Unlock()
+		wsconn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		// one echoed frame, then the relay closes: enough to prove the
+		// byte path moved, exactly the stubTunnelServer shape
+		ctx := context.Background()
+		_, data, rerr := wsconn.Read(ctx)
+		if rerr != nil {
+			return
+		}
+		wsconn.Write(ctx, websocket.MessageBinary, data)
+		wsconn.Close(websocket.StatusNormalClosure, "")
 	})
 	fs.Server = httptest.NewServer(mux)
 	t.Cleanup(fs.Close)

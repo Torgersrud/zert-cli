@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -357,5 +358,76 @@ func TestResolveTunnelTargetEnvTokenEnvHost(t *testing.T) {
 	}
 	if host != "http://127.0.0.1:1234" || token != "envtok" {
 		t.Fatalf("got (%q, %q), want (http://127.0.0.1:1234, envtok)", host, token)
+	}
+}
+
+// --- the stable name: `zert tunnel me` ----------------------------------
+
+// driveTunnel runs the hidden command the way ssh's ProxyCommand does:
+// stdin and stdout are the connection stream, and the child's argv ended at
+// the sentinel or the raw id. send arrives as the client's bytes; both the
+// relayed stream and everything stderr carried come back for the assertions.
+func driveTunnel(t *testing.T, args []string, send string) (out, errOut string, err error) {
+	t.Helper()
+	oldIn, oldOut, oldErr := os.Stdin, os.Stdout, os.Stderr
+	inR, inW, _ := os.Pipe() // *os.File: the streams the tunnel child really gets
+	outR, outW, _ := os.Pipe()
+	errR, errW, _ := os.Pipe()
+	os.Stdin, os.Stdout, os.Stderr = inR, outW, errW
+	defer func() {
+		os.Stdin, os.Stdout, os.Stderr = oldIn, oldOut, oldErr
+		inW.Close() // releases tunnelRun's stdin reader, if it is still reading
+	}()
+	go func() {
+		if send != "" {
+			inW.Write([]byte(send))
+		}
+		// stdin stays open: like the relay tests, the session ends via the
+		// server's close, not an EOF
+	}()
+	err = cmdTunnel(args)
+	outW.Close()
+	errW.Close()
+	o, _ := io.ReadAll(outR)
+	e, _ := io.ReadAll(errR)
+	return string(o), string(e), err
+}
+
+// TestTunnelMeEnsuresOnceAndDialsThatMachine pins the stable name's whole
+// path: `me` is one ensure ask — never a raw-id dial — and the relay opens
+// against the concrete id that ask answered, so a sleeping machine is awake
+// before any byte moves. The token rides only the authorization header;
+// neither the sentinel nor the token ever reaches the URL, where the id —
+// the one thing the Customer never types — exists and nowhere else.
+func TestTunnelMeEnsuresOnceAndDialsThatMachine(t *testing.T) {
+	fs := newFakeServer(t)
+	fs.live = []string{"zzz9"} // the customer's one machine: asleep, woken by the ask
+	setupHome(t, fs.URL)
+
+	out, errOut, err := driveTunnel(t, []string{"me"}, "hello-through-the-relay")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fs.mu.Lock()
+	asks, paths := fs.ensureAsks, append([]string(nil), fs.tunnelPaths...)
+	auth := fs.tunnelAuth
+	fs.mu.Unlock()
+	if asks != 1 {
+		t.Fatalf("the sentinel is exactly one ensure ask, got %d", asks)
+	}
+	if len(paths) != 1 || paths[0] != "/v1/tunnel/zzz9" {
+		t.Fatalf("must dial the concrete id ensure answered, got dialled paths %v", paths)
+	}
+	if strings.Contains(paths[0], testToken) {
+		t.Fatalf("the token must never reach the URL: %s", paths[0])
+	}
+	if auth != "Bearer "+testToken {
+		t.Fatalf("token must ride only the authorization header, got %q", auth)
+	}
+	if out != "hello-through-the-relay" {
+		t.Fatalf("the relay's byte path must be unchanged, got %q", out)
+	}
+	if strings.Contains(errOut, "zzz9") {
+		t.Fatalf("the id must stay invisible to the Customer, stderr said: %q", errOut)
 	}
 }

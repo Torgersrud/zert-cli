@@ -16,3 +16,10 @@ As the product defines it (see `~/dev/GLOSSARY.md`): opening a connection to
 a running VM — the customer's word for an entry into a VM that already
 exists.
 _Avoid_: reconnect, re- coinages for the act
+
+**Ensure**:
+The door's one answer to "give me my machine" (`POST /v1/vm`): a live machine
+is answered as it is, an Asleep one is woken, and only a customer with nothing
+gets one placed. Asking twice is the same question and answers the same
+machine — which is what makes the CLI's one `502` retry safe.
+_Avoid_: create for the ask (a create is only one of ensure's three outcomes)

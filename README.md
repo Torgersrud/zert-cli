@@ -94,9 +94,9 @@ Short version: HTTPS is enforced (plain `http://` only for loopback or an
 explicit `--insecure` flag), tokens never touch argv or URL query strings, and
 server text is sanitized against terminal-escape injection. Full notes in
 [SECURITY.md](SECURITY.md); known limitations and planned hardening (host-key
-pinning, token revocation, idempotent create) are tracked in
-[docs/FOLLOWUPS.md](docs/FOLLOWUPS.md). Report vulnerabilities privately — see
-SECURITY.md.
+pinning, token revocation) are tracked in [docs/FOLLOWUPS.md](docs/FOLLOWUPS.md)
+— its idempotent-create item is closed there: `POST /v1/vm` is now the door's
+idempotent ensure call. Report vulnerabilities privately — see SECURITY.md.
 
 ## Development
 

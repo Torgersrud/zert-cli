@@ -250,6 +250,41 @@ func TestExtractSeveralRowsRefusesInsteadOfPicking(t *testing.T) {
 	assertNoVMDeleted(t, fs, "a refused extract")
 }
 
+// TestExtractDeadRowsPlaceInsteadOfRefusing pins the corrected policy's
+// copy-out half: several dead rows are not the several-machine anomaly —
+// the Customer has no machine the copy could choose wrong — so the copy
+// proceeds exactly as an empty listing does: the ask places a machine,
+// the story says creating, and the stream comes out of what was placed.
+func TestExtractDeadRowsPlaceInsteadOfRefusing(t *testing.T) {
+	fs := newFakeServer(t)
+	fs.expired = []string{"vmA", "vmB"}
+	setupHome(t, fs.URL)
+	tarPath := makeTarGz(t, tarEntry{name: "out/a.txt", body: "hello", mode: 0644})
+	t.Setenv("FAKE_SSH_STDOUT", tarPath)
+	logPath := fakeSSHStreamingStdout(t)
+	var stderr bytes.Buffer
+	dest := t.TempDir()
+
+	if err := extractRun("~/out", dest, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if got := stderr.String(); !strings.Contains(got, "creating one") || strings.Contains(got, "several machines") {
+		t.Fatalf("several dead rows must be told creating, never refused as several, got %q", got)
+	}
+	asks, placed := fs.ensureCounts()
+	if asks != 1 || len(placed) != 1 || placed[0] != "vm123" {
+		t.Fatalf("the ask must place the one machine, got %d asks, placed %v", asks, placed)
+	}
+	if logged := readLog(t, logPath); !strings.Contains(logged, "user@vm123") {
+		t.Fatalf("the copy must stream out of the placed machine: %s", logged)
+	}
+	b, err := os.ReadFile(filepath.Join(dest, "out", "a.txt"))
+	if err != nil || string(b) != "hello" {
+		t.Fatalf("the copy must land what the placed machine streamed, got %q, %v", b, err)
+	}
+	assertNoVMDeleted(t, fs, "an extract past dead rows")
+}
+
 func TestExtractTarSlipRefused(t *testing.T) {
 	fs := newFakeServer(t)
 	setupHome(t, fs.URL)

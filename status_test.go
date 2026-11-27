@@ -133,6 +133,32 @@ func TestStatusSeveralRowsAdmitsUnusual(t *testing.T) {
 	}
 }
 
+// TestStatusSeveralDeadRowsAdmitsUnusual pins the half of the corrected
+// which-row policy that does not change: any multi-row listing this
+// command cannot answer — several answerable machines, or several rows
+// with nothing answerable — is still the anomaly to admit, because the
+// one-machine law says the Customer's machine is nameable and this
+// listing names it not.
+func TestStatusSeveralDeadRowsAdmitsUnusual(t *testing.T) {
+	fs := newFakeServer(t)
+	setupHome(t, fs.URL)
+	fs.mu.Lock()
+	fs.expired = []string{"vmA", "vmB"}
+	fs.mu.Unlock()
+
+	out := captureStdout(t, func() {
+		if err := cmdStatus(nil); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if !strings.Contains(out, "unusual") || !strings.Contains(out, "zert ls") {
+		t.Fatalf("several dead rows are still an unusual listing on this command, got %q", out)
+	}
+	if strings.Contains(out, "no machine") {
+		t.Fatalf("a multi-row listing is never \"no machine\", got %q", out)
+	}
+}
+
 // TestStatusOneMeaningfulRowAmongDead pins the anomaly's one honest read:
 // when several rows carry exactly one machine the door can answer —
 // running, asleep, or being made — that row is the machine status reports.

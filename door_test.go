@@ -410,8 +410,9 @@ func TestEnsureRejectsMaliciousID(t *testing.T) {
 // whatever state word it carries — the unknown-state honesty is the
 // caller's, reporting the row the door named, never "no machine" — and
 // among several rows only the one answerable row (running, asleep, or
-// being made) can be the machine; any other several-row listing is the
-// anomaly, answered typed so no path can read rows[0] past it.
+// being made) can be the machine. Several answerable rows are the typed
+// ambiguity; several rows with nothing answerable answer that they are
+// dead rows — the anomaly is several machines, and dead rows are none.
 func TestDoorWhichRowAnswers(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -478,9 +479,21 @@ func TestDoorWhichRowAnswers(t *testing.T) {
 			wantVM:  "vmlive",
 		},
 		{
-			name:    "several rows with nothing answerable are the same anomaly",
+			// the typed ambiguity is several machines the door could
+			// answer: two being made answer like two running ones
+			name:     "several rows mid-create are the same typed ambiguity",
+			creating: []string{"vmA", "vmB"},
+			want:     doorRowSeveral,
+		},
+		{
+			// several dead rows are not the several-machine anomaly —
+			// the Customer has no machine the door could answer, let
+			// alone several, so the answer says so typed: the copy arms
+			// read it as none and let the ask place, status admits the
+			// listing as unusual
+			name:    "several rows with nothing answerable answer dead rows, not the anomaly",
 			expired: []string{"vmA", "vmB"},
-			want:    doorRowSeveral,
+			want:    doorRowDead,
 		},
 	}
 	for _, tc := range cases {

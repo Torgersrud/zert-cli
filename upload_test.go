@@ -225,6 +225,35 @@ func TestUploadSeveralRowsRefusesInsteadOfPicking(t *testing.T) {
 	assertNoVMDeleted(t, fs, "a refused upload")
 }
 
+// TestUploadDeadRowsPlaceInsteadOfRefusing pins the corrected policy's
+// copy-in half: several dead rows are not the several-machine anomaly —
+// the Customer has no machine the copy could choose wrong — so the copy
+// proceeds exactly as an empty listing does: the ask places a machine,
+// the story says creating, and the copy streams into what was placed.
+func TestUploadDeadRowsPlaceInsteadOfRefusing(t *testing.T) {
+	fs := newFakeServer(t)
+	fs.expired = []string{"vmA", "vmB"}
+	setupHome(t, fs.URL)
+	logPath := fakeSSH(t)
+	var stderr bytes.Buffer
+	dir := tempDirNamed(t, "mydir")
+
+	if err := uploadRun(dir, nil, strings.NewReader(""), os.Stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if got := stderr.String(); !strings.Contains(got, "creating one") || strings.Contains(got, "several machines") {
+		t.Fatalf("several dead rows must be told creating, never refused as several, got %q", got)
+	}
+	asks, placed := fs.ensureCounts()
+	if asks != 1 || len(placed) != 1 || placed[0] != "vm123" {
+		t.Fatalf("the ask must place the one machine, got %d asks, placed %v", asks, placed)
+	}
+	if logged := readLog(t, logPath); !strings.Contains(logged, "user@vm123") {
+		t.Fatalf("the copy must stream into the placed machine: %s", logged)
+	}
+	assertNoVMDeleted(t, fs, "an upload past dead rows")
+}
+
 func TestUploadSSHArgsForwarded(t *testing.T) {
 	fs := newFakeServer(t)
 	setupHome(t, fs.URL)

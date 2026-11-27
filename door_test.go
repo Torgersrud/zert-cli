@@ -128,6 +128,74 @@ func TestDoorAskOutcomes(t *testing.T) {
 	}
 }
 
+// TestDoorStoryToleratesTheStaleSnapshot pins story 26's mechanism: the
+// outcome wording is read from what the ask itself did — the machine id
+// the wire hands back is the ask's own truth — never from the snapshot
+// alone, so a snapshot that disagrees with the ask must lose. The fake's
+// create stub plays the stale door: the snapshot names a machine, but the
+// ask answers one no listed row names — a flaky connection between the
+// listing and the ask — and the Customer must hear the story the ask did.
+func TestDoorStoryToleratesTheStaleSnapshot(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		live     []string
+		asleep   []string
+		answered string
+		notSay   string
+	}{
+		{
+			// the snapshot says live, so a snapshot-derived story would
+			// say found — but the ask answered a machine no row names,
+			// and found is a story this ask cannot back
+			name:     "a snapshot that says live loses to an ask that answers an unlisted machine",
+			live:     []string{"ghost"},
+			answered: "vmreal",
+			notSay:   "found your vm",
+		},
+		{
+			// the snapshot says asleep, so a snapshot-derived story would
+			// say waking — but nothing was woken: the ask answered a
+			// machine no row names
+			name:     "a snapshot that says asleep loses the same way",
+			asleep:   []string{"ghost"},
+			answered: "vmreal",
+			notSay:   "waking yours",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fs := newFakeServer(t)
+			fs.live = tc.live
+			fs.asleep = tc.asleep
+			fs.create = func(w http.ResponseWriter, _ int) {
+				w.WriteHeader(201)
+				json.NewEncoder(w).Encode(map[string]any{
+					"sandbox_id": tc.answered, "expires_at": json.Number("9999999999"),
+					"state": "running",
+				})
+			}
+
+			var stderr bytes.Buffer
+			vm, outcome, err := askMachine(api{host: fs.URL}, &stderr)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if vm.SandboxID != tc.answered {
+				t.Fatalf("the ask answers the machine it answered, got %s", vm.SandboxID)
+			}
+			if outcome != doorPlaced {
+				t.Fatalf("an id no listed row names is a placed outcome — the story the ask did — got %v", outcome)
+			}
+			story := stderr.String()
+			if !strings.Contains(story, "creating one") {
+				t.Fatalf("the story must be the ask's (creating), got %q", story)
+			}
+			if strings.Contains(story, tc.notSay) {
+				t.Fatalf("the story must never say %q — the snapshot's word, not the ask's, got %q", tc.notSay, story)
+			}
+		})
+	}
+}
+
 // TestDoorAsksFromItsOwnSnapshot pins where the outcome comes from: the
 // module takes the listing snapshot itself, before the ask — a caller
 // that never lists anything still gets the true story, and a caller that

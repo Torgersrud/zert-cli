@@ -237,12 +237,13 @@ func cmdTunnel(args []string) error {
 	if id == tunnelMe {
 		// the stable name: one ensure ask answers the Customer's one
 		// machine — placed, woken, or returned live — before the relay
-		// opens, so the byte path dials a machine that is awake. A
-		// refusal passes through with its message: the Customer learns
-		// the wake path or the reason, never a silent hang. Nothing is
-		// printed on success — a wake is a few seconds' pause, and the
-		// id the ask resolved stays invisible.
-		vm, err := ensureVM(api{host: host, token: token})
+		// opens, so the byte path dials a machine that is awake. The
+		// door's writer is io.Discard: this path renders nothing —
+		// silence is the caller's choice, not the door's omission — and
+		// the id the ask resolved stays invisible. A refusal passes
+		// through with its message: the Customer learns the wake path
+		// or the reason, never a silent hang.
+		vm, _, err := askMachine(api{host: host, token: token}, io.Discard)
 		if err != nil {
 			return err
 		}

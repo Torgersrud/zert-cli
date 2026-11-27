@@ -20,6 +20,17 @@ func TestKillMultipleRejectsAnyBadID(t *testing.T) {
 	}
 }
 
+// TestKillEmptyArgumentIsUsage restores the edge the bare-kill change
+// lost: an empty-string argument — the shell's `zert kill ""` — is not
+// an id to validate, it is the usage error it always was, so the
+// Customer learns the form instead of a guard's wording.
+func TestKillEmptyArgumentIsUsage(t *testing.T) {
+	// the judgement runs before requireLogin, so no creds are needed here
+	if err := cmdKill([]string{""}); err == nil || !strings.Contains(err.Error(), "usage") {
+		t.Fatalf("an empty argument must be the usage error, not an id to validate, got %v", err)
+	}
+}
+
 // bare kill takes down every machine the listing answers — running or
 // asleep — the same ask as `zert kill all`
 func TestKillBareKillsTheMachine(t *testing.T) {

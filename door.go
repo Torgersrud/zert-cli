@@ -18,13 +18,17 @@ package main
 //     whether and where to render, and the stable name renders nothing;
 //   - the quota story: the 409 refusal's listing and hint render through
 //     the caller's writer, and the refusal comes back as an ordinary
-//     error — the module prints to no global and owns no exit policy.
+//     error — the module prints to no global and owns no exit policy;
+//   - the which-row ask: "which row is my machine" — answered with the
+//     machine, none, or a typed several-row ambiguity, from a listing
+//     snapshot the ask takes itself; no path reads a listing row past
+//     that answer, so the anomaly is always admitted, never guessed at.
 //
 // The module takes an api value and never calls requireLogin: it is not
 // a command, and the login and exit policy are the runner's business —
 // the stable name builds its own api from resolveTunnelTarget. The
-// interface's first ask is askMachine; the second ask ("which row is my
-// machine") joins it with landing (b) of spec #30.
+// interface is two asks: askMachine ("give me my machine") and
+// askWhichRow ("which row is my machine").
 
 import (
 	"encoding/json"
@@ -133,6 +137,82 @@ func askMachine(a api, stderr io.Writer) (*vmRow, doorOutcome, error) {
 		return nil, 0, err
 	}
 	return vm, outcome, nil
+}
+
+// askWhichRow is the door's second ask: "which row is my machine" —
+// answered from a listing snapshot the ask takes itself, never a
+// caller's. The answer is typed: the machine (a single row whatever
+// state word it carries, or the one answerable row among several),
+// none, or a several-row ambiguity the door refuses to resolve — the
+// one-machine law says the Customer has one machine, so a listing that
+// does not name it is an anomaly to admit, never rows[0] to act on.
+// The ask renders nothing and costs no ensure ask: the callers that
+// need a machine whatever it takes ask askMachine, and the ones that
+// read this answer — status, the copy arms — decide what it means on
+// their own paths.
+func askWhichRow(a api) (doorRowAnswer, *vmRow, error) {
+	rows, err := listVMs(a)
+	if err != nil {
+		return 0, nil, err
+	}
+	switch {
+	case len(rows) == 0:
+		return doorRowNone, nil, nil
+	case len(rows) == 1:
+		// one row is the machine even when its state word is one this
+		// build does not know: the door names the machine, the caller
+		// reports the state — never "no machine"
+		return doorRowMachine, &rows[0], nil
+	}
+	var answerable []vmRow
+	for _, r := range rows {
+		if answerableRow(r) {
+			answerable = append(answerable, r)
+		}
+	}
+	if len(answerable) != 1 {
+		return doorRowSeveral, nil, nil
+	}
+	return doorRowMachine, &answerable[0], nil
+}
+
+// answerableRow reports whether a listed row is a machine the door can
+// answer — running, asleep, or being made. Expired rows and state words
+// this build has never seen are dead rows: they answer nothing.
+func answerableRow(r vmRow) bool {
+	return r.Live || r.Asleep || r.Creating
+}
+
+// doorRowAnswer is the which-row ask's answer: the machine, none, or a
+// typed ambiguity — the several-row anomaly that no path may resolve by
+// reading a listing row past the answer.
+type doorRowAnswer int
+
+const (
+	// doorRowMachine: the listing names the Customer's one machine — a
+	// single row whatever state it carries, or the one answerable row
+	// among several.
+	doorRowMachine doorRowAnswer = iota + 1
+
+	// doorRowNone: nothing is listed.
+	doorRowNone
+
+	// doorRowSeveral: several rows that do not reduce to one machine —
+	// a server-side anomaly under the one-machine law, answered typed
+	// so every path admits it instead of acting on an arbitrary row.
+	doorRowSeveral
+)
+
+func (r doorRowAnswer) String() string {
+	switch r {
+	case doorRowMachine:
+		return "machine"
+	case doorRowNone:
+		return "none"
+	case doorRowSeveral:
+		return "several"
+	}
+	return "unknown row answer"
 }
 
 // ensureVM is the wire ask itself — POST /v1/vm, the door's idempotent

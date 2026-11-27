@@ -59,10 +59,10 @@ has never seen is admitted, not guessed at. Raw ids appear in `zert ls`
 and nowhere else on the customer-facing surface.
 
 `zert attach [id]` is how you come back to your VM: with exactly one
-machine (running or asleep) the id is optional, with several you have to
-name one (`zert ls` lists them), and with none it points you at `zert vm`.
-A machine that fell asleep wakes when you attach — a few seconds' pause,
-then the same shell, with everything as you left it. An attach to an id
+machine (running or asleep) the id is optional, with several running you
+have to name one (`zert ls` lists them), and with none it points you at
+`zert vm`. A machine that fell asleep wakes when you attach — a few
+seconds' pause, then the same shell, with everything as you left it. An attach to an id
 that is gone or not yours says so: "no such vm <id> — zert ls lists
 your vms". Leaving an attached session never kills the VM either — only
 `zert kill` ends it: an idle machine falls asleep, and your next connect

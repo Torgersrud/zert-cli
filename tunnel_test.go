@@ -431,3 +431,91 @@ func TestTunnelMeEnsuresOnceAndDialsThatMachine(t *testing.T) {
 		t.Fatalf("the id must stay invisible to the Customer, stderr said: %q", errOut)
 	}
 }
+
+// TestTunnelMePlacesTheFirstMachine pins the stable name's other half: a
+// Customer with nothing gets their machine placed by the same one ask —
+// setup ends before they notice it began — and the tunnel dials what was
+// placed.
+func TestTunnelMePlacesTheFirstMachine(t *testing.T) {
+	fs := newFakeServer(t) // nothing live: ensure places the one machine
+	setupHome(t, fs.URL)
+
+	out, _, err := driveTunnel(t, []string{"me"}, "first-connect")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fs.mu.Lock()
+	asks, placed := fs.ensureAsks, append([]string(nil), fs.placed...)
+	paths := append([]string(nil), fs.tunnelPaths...)
+	fs.mu.Unlock()
+	if asks != 1 || len(placed) != 1 || placed[0] != "vm123" {
+		t.Fatalf("one ask must place the one machine, got %d asks, placed %v", asks, placed)
+	}
+	if len(paths) != 1 || paths[0] != "/v1/tunnel/vm123" {
+		t.Fatalf("must dial the machine the ask placed, got dialled paths %v", paths)
+	}
+	if out != "first-connect" {
+		t.Fatalf("the relay's byte path must be unchanged, got %q", out)
+	}
+}
+
+// TestTunnelMeRefusalPassesThrough pins that a refused ensure reaches the
+// Customer as its message — the wake path or the reason, never a silent
+// hang: the ask is not retried, and a machine that could not be woken is
+// never dialled.
+func TestTunnelMeRefusalPassesThrough(t *testing.T) {
+	fs := newFakeServer(t)
+	fs.create = func(w http.ResponseWriter, _ int) {
+		http.Error(w, `{"detail":"wake failed: the sleeping machine could not be woken"}`, 503)
+	}
+	setupHome(t, fs.URL)
+
+	_, _, err := driveTunnel(t, []string{"me"}, "")
+	if err == nil || !strings.Contains(err.Error(), "could not be woken") {
+		t.Fatalf("the refusal's message must pass through, got %v", err)
+	}
+	fs.mu.Lock()
+	asks, paths := fs.ensureAsks, append([]string(nil), fs.tunnelPaths...)
+	fs.mu.Unlock()
+	if asks != 1 {
+		t.Fatalf("a refusal is final: want 1 ask, got %d", asks)
+	}
+	if len(paths) != 0 {
+		t.Fatalf("a refused wake must open no relay, dialled %v", paths)
+	}
+}
+
+// TestTunnelRawIDIsUntouched pins the escape hatch: a raw id dials the
+// relay exactly as before — no ensure ask — the sentinel is the one word
+// `me` and nothing else, and anything that is neither a valid id nor the
+// sentinel keeps its invalid-id refusal.
+func TestTunnelRawIDIsUntouched(t *testing.T) {
+	fs := newFakeServer(t)
+	setupHome(t, fs.URL)
+
+	out, _, err := driveTunnel(t, []string{"vm123"}, "raw-id-bytes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// the sentinel is exact: `ME` is a valid id and dials as one
+	outME, _, err := driveTunnel(t, []string{"ME"}, "exact-sentinel")
+	if err != nil {
+		t.Fatalf("a valid id is never the sentinel, got %v", err)
+	}
+	if _, _, err := driveTunnel(t, []string{"not an id"}, ""); err == nil ||
+		!strings.Contains(err.Error(), "invalid vm id") {
+		t.Fatalf("want the invalid-id refusal for a non-sentinel word, got %v", err)
+	}
+	fs.mu.Lock()
+	asks, paths := fs.ensureAsks, append([]string(nil), fs.tunnelPaths...)
+	fs.mu.Unlock()
+	if asks != 0 {
+		t.Fatalf("the raw-id path must never ensure, got %d asks", asks)
+	}
+	if len(paths) != 2 || paths[0] != "/v1/tunnel/vm123" || paths[1] != "/v1/tunnel/ME" {
+		t.Fatalf("raw ids must dial exactly as before, got dialled paths %v", paths)
+	}
+	if out != "raw-id-bytes" || outME != "exact-sentinel" {
+		t.Fatalf("the raw-id relay must be unchanged, got %q and %q", out, outME)
+	}
+}

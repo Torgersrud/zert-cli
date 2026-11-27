@@ -5,8 +5,8 @@ package main
 //
 //   - enterVM: the interactive Entry (`zert vm` and the post-copy entry of
 //     `zert <path>`), tmux wrap included;
-//   - execInVM: a non-interactive exec with piped stdio (the upload copy
-//     stream, `zert extract`), whose interface cannot express the tmux wrap
+//   - execInVM: a non-interactive exec with piped stdio (the transfer
+//     module's two copy streams), whose interface cannot express the tmux wrap
 //     or a forced -t — "a piped stream never gets the wrap" is structural.
 //
 // The invariants that hold on every path live once here: the base options
@@ -198,13 +198,6 @@ func sshResult(waitErr error) error {
 	return nil
 }
 
-// errSpawn marks the one failure runWithSignalForwarding reports from before
-// a child exists. A caller that pipes a stream into the child tells "spawn
-// failed" from "the child ran and lost" with errors.Is on it, and releases
-// the stream's producer only in the first case (see execInVM). The wording a
-// caller sees is unchanged: the helper formats it as "spawn ssh: %w".
-var errSpawn = errors.New("spawn ssh")
-
 // runWithSignalForwarding is the module's one spawn-and-wait tail, the whole
 // signal-forwarding invariant in one place: it registers SIGINT/SIGTERM with
 // this process (deregistered on the way out), starts the child, waits on it
@@ -216,7 +209,10 @@ func runWithSignalForwarding(sshCmd *exec.Cmd) error {
 	signal.Notify(sigc, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(sigc)
 	if err := sshCmd.Start(); err != nil {
-		return fmt.Errorf("%w: %w", errSpawn, err)
+		// a child that never was, in the one wording every path reports;
+		// no path tells it from "the child ran and lost" — the transfer
+		// module releases its codec the same way either way
+		return fmt.Errorf("spawn ssh: %w", err)
 	}
 	done := make(chan error, 1)
 	go func() { done <- sshCmd.Wait() }()
@@ -259,26 +255,19 @@ func enterVM(creds *Credentials, vm *vmRow, scan sshScan, stdin io.Reader, stdou
 }
 
 // execInVM runs remoteCmd inside the vm as a non-interactive ssh exec with
-// piped stdio — the copy stream of `zert <path>`, the tar of `zert extract`.
+// piped stdio — the transfer module's two copy streams, and nothing else.
 // The interface cannot express the tmux wrap or a forced -t, only a fixed
 // command over pipes, so "a piped stream never gets the wrap" is a fact of
-// the signature rather than a rule to remember. The caller owns any pipes it
-// feeds or drains around the call; a non-nil error from here is the
-// authoritative failure and outranks stream fallout (an ssh exit error
-// arrives as an *exitError carrying ssh's exit code). Like the interactive
-// Entry, a signal that reaches zert is forwarded to the ssh child, so a
-// Ctrl-C during a long copy or extract stops that child instead of leaving
-// its fate to chance.
+// the signature rather than a rule to remember. The pipes around the call
+// are the transfer module's, and it closes them once this returns either
+// way, so a child that never started is released exactly like a finished
+// one. A non-nil error from here is the authoritative failure and outranks
+// stream fallout (an ssh exit error arrives as an *exitError carrying
+// ssh's exit code). Like the interactive Entry, a signal that reaches zert
+// is forwarded to the ssh child, so a Ctrl-C during a long copy or extract
+// stops that child instead of leaving its fate to chance.
 func execInVM(creds *Credentials, vm *vmRow, remoteCmd string, stdin io.Reader, stdout, stderr io.Writer) error {
 	sshCmd := vmSSHCommand(creds, vm, stdin, stdout, stderr)
 	sshCmd.Args = append(sshCmd.Args, vmUserDest(vm.SandboxID), remoteCmd)
-	err := runWithSignalForwarding(sshCmd)
-	if errors.Is(err, errSpawn) {
-		// never leave a caller's stream producer writing into a stdin that
-		// got no child
-		if closer, ok := stdin.(io.Closer); ok {
-			_ = closer.Close()
-		}
-	}
-	return err
+	return runWithSignalForwarding(sshCmd)
 }

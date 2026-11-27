@@ -322,6 +322,95 @@ func TestVMSleeperHearsTheWakeStory(t *testing.T) {
 	assertNoVMDeleted(t, fs, "an entry that wakes a sleeper")
 }
 
+// TestVMLiveMachineIsFoundAndEntered pins the entry path's rendering of
+// the door's answered-as-is outcome, end to end: a Customer with a
+// running machine is told it was found — the machine was there, the ask
+// handed it back — and the entry opens into that same machine, never a
+// new one.
+func TestVMLiveMachineIsFoundAndEntered(t *testing.T) {
+	fs := newFakeServer(t)
+	fs.live = []string{"vmlive"}
+	setupHome(t, fs.URL)
+	logPath := fakeSSH(t)
+	var stderr bytes.Buffer
+
+	if err := vmRun(nil, strings.NewReader(""), os.Stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	story := stderr.String()
+	if !strings.Contains(story, "found your vm — entering it") {
+		t.Fatalf("a live machine must be told found, got %q", story)
+	}
+	if strings.Contains(story, "creating") || strings.Contains(story, "waking") {
+		t.Fatalf("a live machine is neither created nor woken, got %q", story)
+	}
+	assertSSHCommonOptions(t, readLog(t, logPath), "vmlive")
+	if asks, placed := fs.ensureCounts(); asks != 1 || len(placed) != 0 {
+		t.Fatalf("a found machine is one ask that places nothing, got %d asks, placed %v", asks, placed)
+	}
+	assertNoVMDeleted(t, fs, "an entry into a found machine")
+}
+
+// TestVMNothingPlacesTheFirstMachine pins the entry path's rendering of
+// the door's placed outcome, end to end: a Customer with nothing is told
+// a machine is being placed — the wait the ask is about to cause — and
+// the entry opens into the machine that ask placed.
+func TestVMNothingPlacesTheFirstMachine(t *testing.T) {
+	fs := newFakeServer(t) // nothing listed: the ask places the one machine
+	setupHome(t, fs.URL)
+	logPath := fakeSSH(t)
+	var stderr bytes.Buffer
+
+	if err := vmRun(nil, strings.NewReader(""), os.Stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	story := stderr.String()
+	if !strings.Contains(story, "no live vm — creating one …") {
+		t.Fatalf("a customer with nothing must be told creating, got %q", story)
+	}
+	if strings.Contains(story, "found your vm") {
+		t.Fatalf("a customer with nothing owns no machine to find, got %q", story)
+	}
+	assertSSHCommonOptions(t, readLog(t, logPath), "vm123")
+	if asks, placed := fs.ensureCounts(); asks != 1 || len(placed) != 1 || placed[0] != "vm123" {
+		t.Fatalf("one ask must place the one machine, got %d asks, placed %v", asks, placed)
+	}
+	assertNoVMDeleted(t, fs, "an entry into a placed machine")
+}
+
+// TestVMExpiredRowIsToldCreating pins spec story 4 end to end on the
+// entry path: an expired row is a dead machine — it answers nothing, and
+// the ask places a new one — so the Customer is told creating, never
+// "found" (no machine was there to find) and never "waking" (a dead
+// machine cannot be woken), and the entry opens into the machine that
+// was placed, never the dead row's id.
+func TestVMExpiredRowIsToldCreating(t *testing.T) {
+	fs := newFakeServer(t)
+	fs.expired = []string{"vmdead"}
+	setupHome(t, fs.URL)
+	logPath := fakeSSH(t)
+	var stderr bytes.Buffer
+
+	if err := vmRun(nil, strings.NewReader(""), os.Stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	story := stderr.String()
+	if !strings.Contains(story, "no live vm — creating one …") {
+		t.Fatalf("an expired row must be told creating, got %q", story)
+	}
+	if strings.Contains(story, "found your vm") || strings.Contains(story, "waking") {
+		t.Fatalf("a story the door cannot back must never be told, got %q", story)
+	}
+	if strings.Contains(story, "vmdead") {
+		t.Fatalf("the dead machine's id is not the Customer's machine, got %q", story)
+	}
+	assertSSHCommonOptions(t, readLog(t, logPath), "vm123")
+	if asks, placed := fs.ensureCounts(); asks != 1 || len(placed) != 1 || placed[0] != "vm123" {
+		t.Fatalf("the ask must place a new machine, got %d asks, placed %v", asks, placed)
+	}
+	assertNoVMDeleted(t, fs, "an entry that places past a dead row")
+}
+
 func TestVMNoSpawnOnMaliciousID(t *testing.T) {
 	fs := newFakeServer(t)
 	setupHome(t, fs.URL)

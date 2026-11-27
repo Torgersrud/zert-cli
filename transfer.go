@@ -1,13 +1,14 @@
 package main
 
 // Transfer module — the one answer to "how does zert move a one-shot copy
-// stream through a vm". The extract stream runs through it today; the
-// upload copy joins it with its pack codec (#28). What every path through
-// this module gets, once:
+// stream through a vm". Both copy directions run through it, each with its
+// own codec: extract's unpack reads a stream out of the vm, upload's pack
+// writes one in. What every path through this module gets, once:
 //
 //   - the pipe: the codec runs concurrently with the ssh child over a pipe
-//     whose ends this module alone opens, counts, drains, aborts and
-//     closes — a caller never touches one;
+//     whose ends this module alone opens, counts, aborts and closes — and
+//     whose unread tail it drains on the way out of the vm — a caller
+//     never touches one;
 //   - the spawn-failure release: a child that never started is gone the
 //     same way a finished one is, the closed pipe handing the codec its
 //     end instead of a hang;
@@ -44,6 +45,19 @@ func (c *countReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
+// countWriter counts the bytes that enter the transfer module's pipe — the
+// compressed total a copy path reports to the customer.
+type countWriter struct {
+	w io.Writer
+	n int64
+}
+
+func (c *countWriter) Write(p []byte) (int, error) {
+	n, err := c.w.Write(p)
+	c.n += int64(n)
+	return n, err
+}
+
 // transferResult applies the one precedence rule every copy stream reads
 // its failures by: the ssh child's failure is authoritative — its exit
 // code preserved, so zert exits with what ssh exited with — and the
@@ -69,8 +83,7 @@ func transferResult(sshErr, codecErr error, wording func(error) error) error {
 // is released the same way a finished one is: the write end closes after
 // execInVM returns either way, handing the codec its end. compressed
 // counts every byte that left the pipe, so a copy path's report and the
-// stream agree. The upload direction (transferToVM, the pack codec) joins
-// this module with #28.
+// stream agree.
 func transferFromVM(creds *Credentials, vm *vmRow, remoteCmd string, stderr io.Writer, unpack func(io.Reader) error, wording func(error) error) (compressed int64, err error) {
 	pr, pw := io.Pipe()
 	cr := &countReader{r: pr}
@@ -99,4 +112,39 @@ func transferFromVM(creds *Credentials, vm *vmRow, remoteCmd string, stderr io.W
 	_ = pw.Close() // the child is gone — or never started: hand the codec its EOF
 	codecErr := <-codecDone
 	return cr.n, transferResult(sshErr, codecErr, wording)
+}
+
+// transferToVM runs one one-shot copy stream into the vm, transferFromVM's
+// mirror: pack, the copy path's codec (upload's tar.gz builder), writes the
+// local tree across a module-owned pipe into remoteCmd's stdin, and the
+// answer is the bytes that crossed the pipe and the one failure that
+// outranks the other. The pipe is the module's — pack gets a writer, never
+// a pipe end — and the codec's own error is the payload that hands the
+// child its end: EOF on success, the raw error on failure, so a failure
+// resurfaces through the child's own "run ssh:" report carrying the
+// codec's words. compressed counts every byte that entered the pipe, so a
+// copy path's report and the stream agree.
+func transferToVM(creds *Credentials, vm *vmRow, remoteCmd string, stdout, stderr io.Writer, pack func(io.Writer) error, wording func(error) error) (compressed int64, err error) {
+	pr, pw := io.Pipe()
+	cw := &countWriter{w: pw}
+	codecDone := make(chan error, 1)
+	go func() {
+		err := pack(cw)
+		// done or failed, the child hears it from the pipe: EOF on
+		// success, or the codec's raw error — the payload that can
+		// resurface through the child's own "run ssh:" report, where it
+		// must read as the codec said it
+		if err != nil {
+			_ = pw.CloseWithError(err)
+		} else {
+			_ = pw.Close()
+		}
+		codecDone <- err
+	}()
+	// the codec runs concurrently with the transfer: its pipe writes
+	// simply block until the ssh child is alive and reading
+	sshErr := execInVM(creds, vm, remoteCmd, pr, stdout, stderr)
+	_ = pr.Close() // the child is gone — or never started: a codec blocked mid-write fails instead of hanging
+	codecErr := <-codecDone
+	return cw.n, transferResult(sshErr, codecErr, wording)
 }

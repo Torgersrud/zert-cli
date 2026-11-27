@@ -194,10 +194,11 @@ func humanBytes(n int64) string {
 // streamed as a tar.gz through a single ssh exec (`tar -xzf - -C ~`), which
 // avoids scp's per-file round trips and compresses the whole tree as one
 // stream (compression happens client-side, before the encrypted tunnel).
-// sshArgs comes from parseSSHArgs and applies to the interactive session
-// entered after the copy — always when this call created the vm, and also
-// for a pre-existing live vm when the user passed extra args.
-func uploadRun(arg string, sshArgs []string, stdin io.Reader, stdout, stderr io.Writer) error {
+// scan is the ssh argv scanner's one answer for the args after the path,
+// and applies to the interactive session entered after the copy — always
+// when this call created the vm, and also for a pre-existing live vm when
+// the user passed args the scan forwards.
+func uploadRun(arg string, scan sshScan, stdin io.Reader, stdout, stderr io.Writer) error {
 	src := expandTilde(arg)
 	trimmed := strings.TrimRight(src, "/")
 	base := filepath.Base(trimmed)
@@ -292,9 +293,9 @@ func uploadRun(arg string, sshArgs []string, stdin io.Reader, stdout, stderr io.
 
 	// leaving the entered vm never kills it: only `zert kill` or its expiry
 	// ends a vm — and --keep no longer decides anything either.
-	if created || len(sshArgs) > 0 {
+	if created || len(scan.args) > 0 {
 		fmt.Fprintf(stderr, "entering vm %s …\n", vm.SandboxID)
-		return enterVM(creds, vm, sshArgs, stdin, stdout, stderr)
+		return enterVM(creds, vm, scan, stdin, stdout, stderr)
 	}
 	return nil
 }
@@ -303,6 +304,11 @@ func cmdUpload(args []string) error {
 	if len(args) < 1 {
 		return errors.New("usage: zert <path> [ssh args..]")
 	}
-	sshArgs := parseSSHArgs(os.Stderr, args[1:])
-	return uploadRun(args[0], sshArgs, os.Stdin, os.Stdout, os.Stderr)
+	// the one walk happens at the entry, so even a refused upload has
+	// answered the grammar and warned for a swallowed --keep
+	scan := scanSSHArgs(args[1:])
+	if scan.sawKeep {
+		warnKeepDeprecated(os.Stderr)
+	}
+	return uploadRun(args[0], scan, os.Stdin, os.Stdout, os.Stderr)
 }

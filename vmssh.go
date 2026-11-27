@@ -12,10 +12,13 @@ package main
 // The invariants that hold on every path live once here: the base options
 // (self-exec ProxyCommand, accept-new host keys, the keepalive pair), the
 // user@<id> destination, the token reaching the tunnel child via environment
-// and never argv, the spawn/exit error wording, SIGINT/SIGTERM forwarding to
-// the ssh child, and — per the product's ADR-0002 — that entering a vm never
-// ends its life: no function in this module so much as mentions DELETE; only
-// `zert kill` or the vm's expiry does.
+// and never argv, the ssh argv grammar — one scanner answers, in a single
+// walk, the args forwarded verbatim, the deprecated --keep swallow, and
+// where a user remote command starts —, the spawn/exit error wording,
+// SIGINT/SIGTERM forwarding to the ssh child, and — per the product's
+// ADR-0002 — that entering a vm never ends its life: no function in this
+// module so much as mentions DELETE; only `zert kill` or the vm's expiry
+// does.
 
 import (
 	"errors"
@@ -61,27 +64,6 @@ func childEnv(base []string, token, host string) []string {
 // separate argument (-b -c -D -E -e -F -I -i -J -l -L -m -O -o -p -Q -R -S
 // -w): such a value is not positional and never starts a remote command.
 const sshOptsWithArg = "bcDEeFIiJlLmOopQRSw"
-
-// hasUserRemoteCommand reports whether the forwarded ssh args contain the
-// start of a user-supplied remote command: the first token ssh would read
-// as neither an option nor an option's value. Unknown option letters count
-// as plain flags, so a following bare token lands on the command side —
-// erring that way leaves the argv exactly as today (unwrapped), the safe
-// reading of "passed through".
-func hasUserRemoteCommand(sshArgs []string) bool {
-	for i := 0; i < len(sshArgs); i++ {
-		a := sshArgs[i]
-		switch {
-		case strings.HasPrefix(a, "-") && a != "-":
-			if len(a) == 2 && strings.ContainsRune(sshOptsWithArg, rune(a[1])) {
-				i++ // this option's value is the next token
-			}
-		default:
-			return true
-		}
-	}
-	return false
-}
 
 // sshScan is what one walk of the ssh argv grammar answers: the args to
 // forward verbatim to ssh, whether the deprecated --keep was swallowed (it
@@ -142,6 +124,14 @@ func scanSSHArgs(args []string) sshScan {
 		scan.remoteCmd = true // the bare token: a user command starts here
 	}
 	return scan
+}
+
+// warnKeepDeprecated prints the one deprecation notice for the --keep flag,
+// which no longer changes anything: no entry path kills a vm on exit. The
+// scanner answers sawKeep; each entry path that scans once prints this at
+// most once.
+func warnKeepDeprecated(stderr io.Writer) {
+	fmt.Fprintln(stderr, "--keep is obsolete — vms no longer die on exit")
 }
 
 // interactiveRemoteCmd is the remote command an interactive entry runs in
@@ -242,19 +232,21 @@ func runWithSignalForwarding(sshCmd *exec.Cmd) error {
 // session ends — whatever the reason — the vm keeps running: only `zert
 // kill` or an expired Idle window ever ends it. Only an *interactive*
 // entry wraps: a piped stdin never gets the tmux command or the forced
-// -t, exactly the plain ssh of before the wrap existed.
-func enterVM(creds *Credentials, vm *vmRow, sshArgs []string, stdin io.Reader, stdout, stderr io.Writer) error {
+// -t, exactly the plain ssh of before the wrap existed. The wrap decision
+// consumes the scanner's answer — scan.remoteCmd is where the one walk
+// judged the user's command to start, so no second walk happens here.
+func enterVM(creds *Credentials, vm *vmRow, scan sshScan, stdin io.Reader, stdout, stderr io.Writer) error {
 	// the wrap is the remote command only for an interactive entry without
 	// a remote command of the user's own — their args then reach ssh
 	// verbatim, unwrapped, exactly as before tmux
-	wrapped := stdinIsInteractive() && !hasUserRemoteCommand(sshArgs)
+	wrapped := stdinIsInteractive() && !scan.remoteCmd
 	sshCmd := vmSSHCommand(creds, vm, stdin, stdout, stderr)
 	if wrapped {
 		// ssh only gives an explicit remote command a tty on request,
 		// and tmux needs one
 		sshCmd.Args = append(sshCmd.Args, "-t")
 	}
-	sshCmd.Args = append(sshCmd.Args, sshArgs...)
+	sshCmd.Args = append(sshCmd.Args, scan.args...)
 	sshCmd.Args = append(sshCmd.Args, vmUserDest(vm.SandboxID))
 	if wrapped {
 		sshCmd.Args = append(sshCmd.Args, interactiveRemoteCmd)

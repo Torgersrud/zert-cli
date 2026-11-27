@@ -154,42 +154,15 @@ func ensureVM(a api) (*vmRow, error) {
 	return &vmRow{SandboxID: out.SandboxID, ExpiresAt: out.ExpiresAt, Live: true}, nil
 }
 
-// parseSSHArgs returns the args forwarded verbatim to ssh — everything
-// after "--" is passthrough — and swallows the deprecated --keep flag:
-// when it was given, this one place prints its deprecation notice, so
-// every entry path (vm, upload) warns exactly once.
-func parseSSHArgs(stderr io.Writer, args []string) (sshArgs []string) {
-	passthrough := false
-	keep := false
-	for _, a := range args {
-		if passthrough {
-			sshArgs = append(sshArgs, a)
-			continue
-		}
-		switch a {
-		case "--":
-			passthrough = true
-		case "--keep", "-keep":
-			keep = true
-		default:
-			sshArgs = append(sshArgs, a)
-		}
-	}
-	if keep {
-		warnKeepDeprecated(stderr)
-	}
-	return sshArgs
-}
-
-// warnKeepDeprecated prints the one deprecation notice for the --keep flag,
-// which no longer changes anything: no entry path kills a vm on exit.
-func warnKeepDeprecated(stderr io.Writer) {
-	fmt.Fprintln(stderr, "--keep is obsolete — vms no longer die on exit")
-}
-
 // vmRun is cmdVM with injectable stdio and ssh binary (for the runner seam).
 func vmRun(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
-	sshArgs := parseSSHArgs(stderr, args)
+	// the one walk: everything the grammar answers — the args ssh gets,
+	// the swallowed --keep, where the user's command starts — is answered
+	// here, once, before the ask
+	scan := scanSSHArgs(args)
+	if scan.sawKeep {
+		warnKeepDeprecated(stderr)
+	}
 
 	creds, a := requireLogin()
 	me, err := getMe(a)
@@ -221,7 +194,7 @@ func vmRun(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	fmt.Fprintf(stderr, "vm %s ready (expires in %s)\n", vm.SandboxID,
 		time.Until(time.Unix(int64(vm.ExpiresAt), 0)).Round(time.Second))
 
-	return enterVM(creds, vm, sshArgs, stdin, stdout, stderr)
+	return enterVM(creds, vm, scan, stdin, stdout, stderr)
 }
 
 func cmdVM(args []string) error {

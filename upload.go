@@ -245,11 +245,9 @@ func uploadRun(arg string, sshArgs []string, stdin io.Reader, stdout, stderr io.
 	vm := pickLiveVM(rows)
 	created := false
 	if vm == nil {
-		// the same pre-check as the vm command, on the listing already in
-		// hand: wakeOrCreate announces the ask the listing calls for —
-		// waking an Asleep row, placing one when nothing answerable is
-		// listed — and makes it
-		vm, err = wakeOrCreate(a, rows, stderr)
+		// no live row to stream into: the door's ask decides wake or
+		// place from its own snapshot and tells the story itself
+		vm, _, err = askMachine(a, stderr)
 		if err != nil {
 			return err
 		}

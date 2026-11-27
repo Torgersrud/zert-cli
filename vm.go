@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -59,101 +58,6 @@ func findLocalPubkey() (string, error) {
 	return "", errors.New("no ssh key found: run `ssh-keygen -t ed25519` first")
 }
 
-// hasAnswerableVM reports whether the listing carries a machine the door's
-// ensure ask answers as the Customer's own — one that is running or
-// asleep. Rows that are neither (expired, or a state word this build has
-// never seen) are dead rows: they answer nothing, and the ask places a
-// machine instead.
-func hasAnswerableVM(rows []vmRow) bool {
-	for _, r := range rows {
-		if r.Live || r.Asleep {
-			return true
-		}
-	}
-	return false
-}
-
-// hasAsleepVM reports whether any listed row is a sleeper.
-func hasAsleepVM(rows []vmRow) bool {
-	for _, r := range rows {
-		if r.Asleep {
-			return true
-		}
-	}
-	return false
-}
-
-// wakeOrCreate announces the ensure ask a customer without a live machine
-// makes, and makes it: the machine is theirs and asleep — woken — or
-// nothing answerable is listed and one is placed. The wording lives here
-// once, so every path that asks from a listing tells the same story.
-func wakeOrCreate(a api, rows []vmRow, stderr io.Writer) (*vmRow, error) {
-	if hasAsleepVM(rows) {
-		fmt.Fprintln(stderr, "no live vm — waking yours …")
-	} else {
-		fmt.Fprintln(stderr, "no live vm — creating one …")
-	}
-	return ensureVM(a)
-}
-
-// ensureVM asks the door for the Customer's one machine — POST /v1/vm is the
-// ensure call ("give me my machine"): a live machine is answered as it is, an
-// Asleep one is woken, and only a Customer with nothing gets one placed. The
-// response says what the machine is, never which of the three happened, so a
-// caller that needs to tell the Customer that learns it from a listing before
-// the ask.
-func ensureVM(a api) (*vmRow, error) {
-	resp, data, err := a.do("POST", "/v1/vm", map[string]any{})
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode == http.StatusBadGateway {
-		// one automatic retry, and a safe one now: the route is
-		// idempotent ensure, so a 502 that actually reached the door
-		// answered the Customer's machine, and asking again returns
-		// that machine instead of placing a second one.
-		resp, data, err = a.do("POST", "/v1/vm", map[string]any{})
-		if err != nil {
-			return nil, err
-		}
-	}
-	switch resp.StatusCode {
-	case http.StatusCreated:
-	case http.StatusConflict:
-		fmt.Fprintln(os.Stderr, detail(data))
-		fmt.Fprintln(os.Stderr, "your VMs:")
-		if rows, err := listVMs(a); err == nil {
-			printVMs(rows)
-		}
-		// attach is gone: the way forward is the listing that names the
-		// machines and kill's freed slot — never a command that no longer
-		// exists
-		fmt.Fprintln(os.Stderr, "hint: zert ls lists your vms; "+
-			"zert kill <id> (or zert kill all) frees a slot")
-		return nil, &exitError{1, errors.New("quota reached")}
-	default:
-		return nil, mapped(resp, data)
-	}
-	var out struct {
-		SandboxID string  `json:"sandbox_id"`
-		ExpiresAt float64 `json:"expires_at"`
-		State     string  `json:"state"`
-	}
-	if err := json.Unmarshal(data, &out); err != nil || out.SandboxID == "" {
-		return nil, errors.New("malformed ensure response")
-	}
-	if !validSandboxID(out.SandboxID) {
-		return nil, errors.New("malformed server response: invalid vm id")
-	}
-	// every 201 outcome — created, woken or returned live — hands over a
-	// running machine, so anything else is a door that did not keep the
-	// contract, and the CLI refuses to enter it
-	if out.State != "running" {
-		return nil, errors.New("malformed ensure response: vm not running")
-	}
-	return &vmRow{SandboxID: out.SandboxID, ExpiresAt: out.ExpiresAt, Live: true}, nil
-}
-
 // vmRun is cmdVM with injectable stdio and ssh binary (for the runner seam).
 func vmRun(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	// the one walk: everything the grammar answers — the args ssh gets,
@@ -173,21 +77,10 @@ func vmRun(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	// The ensure response carries no outcome word, so the listing decides
-	// what the command tells the Customer: a row the door can answer —
-	// running or asleep — means the ask hands over a machine that is
-	// already theirs, found, not created. Dead rows answer nothing, so the
-	// ask places one and the wording says so.
-	rows, err := listVMs(a)
-	if err != nil {
-		return err
-	}
-	if hasAnswerableVM(rows) {
-		fmt.Fprintln(stderr, "found your vm — entering it")
-	} else {
-		fmt.Fprintln(stderr, "creating vm …")
-	}
-	vm, err := ensureVM(a)
+	// the door owns the ask and its outcome story: the machine, which of
+	// the three outcomes happened and the wording all come back from the
+	// one ask
+	vm, _, err := askMachine(a, stderr)
 	if err != nil {
 		return err
 	}

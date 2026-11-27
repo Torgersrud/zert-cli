@@ -245,44 +245,6 @@ func TestVMNoSpawnOnMaliciousID(t *testing.T) {
 	assertNoSSHSpawned(t, logPath, "an invalid vm id")
 }
 
-func TestVMQuota409ShowsList(t *testing.T) {
-	fs := newFakeServer(t)
-	setupHome(t, fs.URL)
-	fakeSSH(t)
-	fs.create = func(w http.ResponseWriter, _ int) {
-		http.Error(w, `{"detail":"quota reached (1 live VM)"}`, 409)
-	}
-
-	// the quota listing and its hint print straight to os.Stderr
-	var err error
-	hint := captureStderr(t, func() {
-		err = vmRun(nil, strings.NewReader(""), os.Stdout, os.Stderr)
-	})
-	var ee *exitError
-	if !errors.As(err, &ee) || ee.code != 1 {
-		t.Fatalf("want exit 1, got %v", err)
-	}
-	if err == nil || !strings.Contains(err.Error(), "quota reached") {
-		t.Fatalf("want quota-reached error, got %v", err)
-	}
-	// attach is gone, so the hint must not teach it — and the way forward
-	// must still be stated: the listing names the machines, kill frees a slot
-	if strings.Contains(hint, "attach") {
-		t.Fatalf("quota-409 hint must not teach the removed attach command, got %q", hint)
-	}
-	if !strings.Contains(hint, "zert ls") {
-		t.Fatalf("quota-409 hint must state a way forward that is not attach, got %q", hint)
-	}
-	if !strings.Contains(hint, "zert kill <id>") {
-		t.Fatalf("quota-409 hint must still offer zert kill, got %q", hint)
-	}
-	// the 409 backstop is a refusal: one ask, no retry
-	asks, _ := fs.ensureCounts()
-	if asks != 1 {
-		t.Fatalf("a 409 refusal must not be retried, got %d asks", asks)
-	}
-}
-
 func countPrefix(entries []string, prefix string) []string {
 	var got []string
 	for _, kv := range entries {

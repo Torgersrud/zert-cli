@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"text/tabwriter"
@@ -58,13 +59,13 @@ func expiryLabel(r vmRow) string {
 	}
 }
 
-func printVMs(rows []vmRow) {
-	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tLIVE\tEXPIRES\tCREATING")
+func printVMs(w io.Writer, rows []vmRow) {
+	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(tw, "ID\tLIVE\tEXPIRES\tCREATING")
 	for _, r := range rows {
-		fmt.Fprintf(w, "%s\t%v\t%s\t%v\n", r.SandboxID, r.Live, expiryLabel(r), r.Creating)
+		fmt.Fprintf(tw, "%s\t%v\t%s\t%v\n", r.SandboxID, r.Live, expiryLabel(r), r.Creating)
 	}
-	_ = w.Flush()
+	_ = tw.Flush()
 }
 
 func cmdLS([]string) error {
@@ -73,6 +74,6 @@ func cmdLS([]string) error {
 	if err != nil {
 		return err
 	}
-	printVMs(rows)
+	printVMs(os.Stdout, rows)
 	return nil
 }

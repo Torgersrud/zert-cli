@@ -32,7 +32,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 )
 
 // doorOutcome is which of the three things the ensure ask did — the
@@ -129,7 +128,7 @@ func askMachine(a api, stderr io.Writer) (*vmRow, doorOutcome, error) {
 		outcome = doorPlaced
 	}
 	fmt.Fprintln(stderr, outcome.story())
-	vm, err := ensureVM(a)
+	vm, err := ensureVM(a, stderr)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -142,7 +141,7 @@ func askMachine(a api, stderr io.Writer) (*vmRow, doorOutcome, error) {
 // placed. The response says what the machine is, never which of the
 // three happened — the outcome story is askMachine's, derived from the
 // snapshot it took.
-func ensureVM(a api) (*vmRow, error) {
+func ensureVM(a api, stderr io.Writer) (*vmRow, error) {
 	resp, data, err := a.do("POST", "/v1/vm", map[string]any{})
 	if err != nil {
 		return nil, err
@@ -160,17 +159,21 @@ func ensureVM(a api) (*vmRow, error) {
 	switch resp.StatusCode {
 	case http.StatusCreated:
 	case http.StatusConflict:
-		fmt.Fprintln(os.Stderr, detail(data))
-		fmt.Fprintln(os.Stderr, "your VMs:")
+		// the quota backstop: the whole listing and the way forward
+		// render through the caller's writer, and the refusal comes
+		// back as an ordinary error — the exit code is the main error
+		// path's to decide, never a helper's
+		fmt.Fprintln(stderr, detail(data))
+		fmt.Fprintln(stderr, "your VMs:")
 		if rows, err := listVMs(a); err == nil {
-			printVMs(rows)
+			printVMs(stderr, rows)
 		}
 		// attach is gone: the way forward is the listing that names the
 		// machines and kill's freed slot — never a command that no
 		// longer exists
-		fmt.Fprintln(os.Stderr, "hint: zert ls lists your vms; "+
+		fmt.Fprintln(stderr, "hint: zert ls lists your vms; "+
 			"zert kill <id> (or zert kill all) frees a slot")
-		return nil, &exitError{1, errors.New("quota reached")}
+		return nil, errors.New("quota reached")
 	default:
 		return nil, mapped(resp, data)
 	}

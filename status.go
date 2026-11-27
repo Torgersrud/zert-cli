@@ -21,11 +21,12 @@ func cmdStatus([]string) error {
 	case doorRowNone:
 		fmt.Println("no machine yet — run `zert vm` to make one")
 		return nil
-	case doorRowSeveral:
+	case doorRowSeveral, doorRowDead:
 		// the Customer has one machine, so the door naming no row is a
-		// server-side anomaly this command must not paper over: the
-		// admission points at the technical listing instead of naming
-		// whatever state an arbitrary row happens to carry
+		// server-side anomaly this command must not paper over —
+		// whether several machines answer or no row does, the admission
+		// points at the technical listing instead of naming whatever
+		// state an arbitrary row happens to carry
 		fmt.Println(errUnusualListing.Error())
 		return nil
 	}

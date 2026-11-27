@@ -22,9 +22,10 @@ package main
 //     the caller's writer, and the refusal comes back as an ordinary
 //     error — the module prints to no global and owns no exit policy;
 //   - the which-row ask: "which row is my machine" — answered with the
-//     machine, none, or a typed several-row ambiguity, from a listing
-//     snapshot the ask takes itself; no path reads a listing row past
-//     that answer, so the anomaly is always admitted, never guessed at.
+//     machine, none, dead rows, or a typed several-machine ambiguity,
+//     from a listing snapshot the ask takes itself; no path reads a
+//     listing row past that answer, so the anomaly is always admitted,
+//     never guessed at;
 //
 // The module takes an api value and never calls requireLogin: it is not
 // a command, and the login and exit policy are the runner's business —
@@ -141,9 +142,14 @@ func askOutcome(rows []vmRow, id string) doorOutcome {
 // answered from a listing snapshot the ask takes itself, never a
 // caller's. The answer is typed: the machine (a single row whatever
 // state word it carries, or the one answerable row among several),
-// none, or a several-row ambiguity the door refuses to resolve — the
-// one-machine law says the Customer has one machine, so a listing that
-// does not name it is an anomaly to admit, never rows[0] to act on.
+// none, several answerable rows — the anomaly the door refuses to
+// resolve, because the one-machine law says the Customer has one
+// machine and a listing that names several machines it could answer is
+// a server-side anomaly to admit, never rows[0] to act on — or dead
+// rows, several rows with nothing answerable: the Customer has no
+// machine the door could answer, let alone several, so this answer is
+// none's equal on every path that acts (the copy arms let the ask
+// place) while status, which only reads, admits the listing as unusual.
 // The ask renders nothing and costs no ensure ask: the callers that
 // need a machine whatever it takes ask askMachine, and the ones that
 // read this answer — status, the copy arms — decide what it means on
@@ -168,10 +174,14 @@ func askWhichRow(a api) (doorRowAnswer, *vmRow, error) {
 			answerable = append(answerable, r)
 		}
 	}
-	if len(answerable) != 1 {
+	switch len(answerable) {
+	case 0:
+		return doorRowDead, nil, nil
+	case 1:
+		return doorRowMachine, &answerable[0], nil
+	default:
 		return doorRowSeveral, nil, nil
 	}
-	return doorRowMachine, &answerable[0], nil
 }
 
 // answerableRow reports whether a listed row is a machine the door can
@@ -181,9 +191,9 @@ func answerableRow(r vmRow) bool {
 	return r.Live || r.Asleep || r.Creating
 }
 
-// doorRowAnswer is the which-row ask's answer: the machine, none, or a
-// typed ambiguity — the several-row anomaly that no path may resolve by
-// reading a listing row past the answer.
+// doorRowAnswer is the which-row ask's answer: the machine, none, dead
+// rows, or a typed ambiguity — the answers no path may resolve by
+// reading a listing row past them.
 type doorRowAnswer int
 
 const (
@@ -195,10 +205,19 @@ const (
 	// doorRowNone: nothing is listed.
 	doorRowNone
 
-	// doorRowSeveral: several rows that do not reduce to one machine —
-	// a server-side anomaly under the one-machine law, answered typed
-	// so every path admits it instead of acting on an arbitrary row.
+	// doorRowSeveral: several rows that answer — the several-machine
+	// anomaly. Under the one-machine law a listing that names several
+	// machines the door could answer is a server-side anomaly, answered
+	// typed so every path admits it instead of acting on an arbitrary
+	// row.
 	doorRowSeveral
+
+	// doorRowDead: several rows, every one of them dead — a listing
+	// that names rows but no machine the door can answer. The Customer
+	// has no machine to choose wrong, so the paths that act read this
+	// as none (the machine ask places); status, which only reads,
+	// admits the listing as unusual.
+	doorRowDead
 )
 
 func (r doorRowAnswer) String() string {
@@ -209,6 +228,8 @@ func (r doorRowAnswer) String() string {
 		return "none"
 	case doorRowSeveral:
 		return "several"
+	case doorRowDead:
+		return "dead rows"
 	}
 	return "unknown row answer"
 }

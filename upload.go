@@ -228,10 +228,12 @@ func uploadRun(arg string, sshArgs []string, stdin io.Reader, stdout, stderr io.
 	if err != nil {
 		return err
 	}
-	// the listing does not name one machine: no copy may silently
-	// stream into whichever row sorted first — the anomaly is refused
-	// in the copy arms' one wording, which admits it and points at the
-	// listing
+	// the listing names several machines the door could answer: no copy
+	// may silently stream into whichever row sorted first — the anomaly
+	// is refused in the copy arms' one wording, which admits it and
+	// points at the listing. Several rows with nothing answerable are
+	// not this refusal: dead rows are no machines, so below they read
+	// as none and the ask places, exactly as an empty listing does.
 	if which == doorRowSeveral {
 		return errSeveralMachinesNoCopy
 	}
@@ -241,9 +243,10 @@ func uploadRun(arg string, sshArgs []string, stdin io.Reader, stdout, stderr io.
 
 	created := false
 	vm := row
-	if which == doorRowNone || !vm.Live {
-		// nothing running to stream into: the door's ask decides wake
-		// or place from its own snapshot and tells the story itself
+	if which != doorRowMachine || !vm.Live {
+		// nothing running to stream into — no row was named, or the one
+		// named is not running yet: the door's ask decides wake or place
+		// from its own snapshot and tells the story itself
 		vm, _, err = askMachine(a, stderr)
 		if err != nil {
 			return err

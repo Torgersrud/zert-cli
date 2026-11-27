@@ -30,7 +30,8 @@ command runners — and the callers keep only the rendering decision.** The
 module's interface is two asks: "give me my machine" (`askMachine`),
 answered with the machine plus a typed outcome — **answered as-is**,
 **woken** or **placed** — and "which row is my machine" (`askWhichRow`),
-answered with the machine, **none**, or a typed **several-row ambiguity**.
+answered with the machine, **none**, **dead rows**, or a typed
+**several-machine ambiguity**.
 Behind that interface live the ensure wire ask with its one safe `502`
 retry (refusals are answers, never retried — ensure's idempotency is what
 makes the retry safe, and the retry keeps exactly the shape the wire
@@ -87,9 +88,14 @@ precede the ask and stay true.
   several — is pinned once at the ask's own interface, against the
   existing door fake; each command suite pins only its rendering
   end-to-end.
-- The several-row anomaly is pinned once at the door (the typed answer)
-  and once per caller for its rendering only: status admits it
-  (`errUnusualListing`), the copy arms refuse (`errSeveralMachinesNoCopy`).
+- The several-machine anomaly is pinned once at the door (the typed
+  answer) and once per caller for its rendering only: status admits it
+  (`errUnusualListing`), the copy arms refuse
+  (`errSeveralMachinesNoCopy`). The typed ambiguity means two or more
+  answerable rows — several dead rows answer `doorRowDead` instead: the
+  Customer has no machine to choose wrong, so the copy arms read it as
+  none and the ask places, while status, which only reads, admits the
+  listing as unusual exactly as before.
 - Every path asks the door: `zert vm`, `zert <path>`, `zert extract` and
   the stable name through the machine ask — the copy arms ask it when the
   row answer is none or not running — and `zert status` and the copy

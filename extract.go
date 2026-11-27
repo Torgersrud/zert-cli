@@ -173,19 +173,22 @@ func extractRun(vmPathArg, dest string, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	// the listing does not name one machine: no copy may stream out of
-	// whichever row sorted first — the anomaly is refused in the copy
-	// arms' one wording, which admits it and points at the listing
+	// the listing names several machines the door could answer: no copy
+	// may stream out of whichever row sorted first — the anomaly is
+	// refused in the copy arms' one wording, which admits it and points
+	// at the listing. Several rows with nothing answerable are not this
+	// refusal: dead rows are no machines, so below they read as none
+	// and the ask places, exactly as an empty listing does.
 	if which == doorRowSeveral {
 		return errSeveralMachinesNoCopy
 	}
 	if err := ensurePubkey(a, me, stderr); err != nil {
 		return err
 	}
-	// the row the door named is not a machine running yet: the ask
-	// decides wake or place from its own snapshot and tells the story
-	// itself — the same story every other path tells
-	if which == doorRowNone || !vm.Live {
+	// the row the door named is not a machine running yet — or no row
+	// was named: the ask decides wake or place from its own snapshot
+	// and tells the story itself — the same story every other path tells
+	if which != doorRowMachine || !vm.Live {
 		vm, _, err = askMachine(a, stderr)
 		if err != nil {
 			return err

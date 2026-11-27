@@ -56,18 +56,24 @@ one wording per outcome, derived once inside the module
 **The which-row ask**:
 "Which row is my machine" — the door module's second ask, answered typed
 from its own listing snapshot: the machine (a single row whatever state
-word it carries, or the one answerable row among several), **none**, or
-a several-row anomaly. No path reads a listing row past that answer.
+word it carries, or the one answerable row among several), **none**,
+**dead rows** (several rows with nothing answerable — the Customer has
+no machine to choose wrong, so paths that act read it as none and let
+the ask place), or a several-machine anomaly. No path reads a listing
+row past that answer.
 _Avoid_: rows-first picks — `rows[0]` acting for the Customer's machine
 is the bug the typed answer retires
 
 **The several-row anomaly**:
 The which-row ask's typed refusal to name a machine: under the one-machine
 law — one Customer, one machine, true by construction, the vocabulary of
-record's Ensure — a listing that does not reduce to one row is a
-server-side anomaly, admitted never guessed. Status admits it and points
-at `zert ls`; every path that would act on a row refuses — the copy arms
-refuse before any bytes move.
+record's Ensure — a listing that names several machines the door could
+answer is a server-side anomaly, admitted never guessed. Status admits
+it and points at `zert ls`; every path that would act on a row refuses —
+the copy arms refuse before any bytes move. Several rows with nothing
+answerable are not this anomaly: dead rows are no machines, so status
+still admits the listing but the paths that act read the answer as none
+and place.
 _Avoid_: resolving it client-side, acting on the first row, "several
 machines" as if the Customer had several
 

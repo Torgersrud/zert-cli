@@ -58,19 +58,6 @@ func findLocalPubkey() (string, error) {
 	return "", errors.New("no ssh key found: run `ssh-keygen -t ed25519` first")
 }
 
-// wakeOrCreate announces the ensure ask a customer without a live machine
-// makes, and makes it: the machine is theirs and asleep — woken — or
-// nothing answerable is listed and one is placed. The wording lives here
-// once, so every path that asks from a listing tells the same story.
-func wakeOrCreate(a api, rows []vmRow, stderr io.Writer) (*vmRow, error) {
-	if hasAsleepVM(rows) {
-		fmt.Fprintln(stderr, "no live vm — waking yours …")
-	} else {
-		fmt.Fprintln(stderr, "no live vm — creating one …")
-	}
-	return ensureVM(a)
-}
-
 // parseSSHArgs returns the args forwarded verbatim to ssh — everything
 // after "--" is passthrough — and swallows the deprecated --keep flag:
 // when it was given, this one place prints its deprecation notice, so

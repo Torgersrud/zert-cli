@@ -153,20 +153,41 @@ func TestExtractCreatesDestDir(t *testing.T) {
 	}
 }
 
+// TestExtractNoLiveVM pins copy-out's half of the door's story (spec
+// story 8): with nothing running, extract asks the door like every other
+// path instead of refusing — the one ensure ask places a machine, the
+// story says creating, and the copy streams out of the machine the ask
+// answered. Extract still never enters what it asked for: one ssh call,
+// the stream, and out.
 func TestExtractNoLiveVM(t *testing.T) {
 	fs := newFakeServer(t)
 	setupHome(t, fs.URL)
-	logPath := fakeSSH(t)
-	fs.create = func(w http.ResponseWriter, _ int) {
-		t.Error("extract must never create a vm")
-		http.Error(w, `{"detail":"no"}`, 500)
-	}
+	tarPath := makeTarGz(t, tarEntry{name: "out/a.txt", body: "hello", mode: 0644})
+	t.Setenv("FAKE_SSH_STDOUT", tarPath)
+	logPath := fakeSSHStreamingStdout(t)
+	var stderr bytes.Buffer
+	dest := t.TempDir()
 
-	err := extractRun("~/out", t.TempDir(), os.Stderr)
-	if err == nil || !strings.Contains(err.Error(), "no live vm") {
-		t.Fatalf("want no-live-vm error, got %v", err)
+	if err := extractRun("~/out", dest, &stderr); err != nil {
+		t.Fatal(err)
 	}
-	assertNoSSHSpawned(t, logPath, "no live vm")
+	if got := stderr.String(); !strings.Contains(got, "creating one") || strings.Contains(got, "waking yours") {
+		t.Fatalf("an empty listing must be told creating, never waking, got %q", got)
+	}
+	asks, placed := fs.ensureCounts()
+	if asks != 1 || len(placed) != 1 || placed[0] != "vm123" {
+		t.Fatalf("the ask must place the one machine, got %d asks, placed %v", asks, placed)
+	}
+	logged := readLog(t, logPath)
+	assertSSHCommonOptions(t, logged, "vm123")
+	if n := len(argLines(logged)); n != 1 {
+		t.Fatalf("extract never enters: exactly one ssh call, got %d: %s", n, logged)
+	}
+	b, err := os.ReadFile(filepath.Join(dest, "out", "a.txt"))
+	if err != nil || string(b) != "hello" {
+		t.Fatalf("the copy must land what the placed machine streamed, got %q, %v", b, err)
+	}
+	assertNoVMDeleted(t, fs, "an extract that places a machine")
 }
 
 // TestExtractSeveralRowsRefusesInsteadOfPicking pins the several-row

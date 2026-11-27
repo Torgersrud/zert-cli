@@ -378,6 +378,33 @@ func TestAttachNoIDWakesSleepingVM(t *testing.T) {
 	assertNoVMDeleted(t, fs, "attaching to a sleeper without an id")
 }
 
+// TestAttachSeveralAsleepWakesOne pins the no-id choice when the listing
+// answers several sleepers and nothing live: the door's ensure ask wakes
+// the one machine it answers, silently — only several live machines demand
+// an id, so the readme's "name one" is the running case alone.
+func TestAttachSeveralAsleepWakesOne(t *testing.T) {
+	fs := newFakeServer(t)
+	fs.asleep = []string{"vms1", "vms2"}
+	setupHome(t, fs.URL)
+	logPath := fakeSSH(t)
+	var stderr bytes.Buffer
+
+	if err := attachRun(nil, strings.NewReader(""), os.Stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stderr.String(), "waking yours") {
+		t.Fatalf("several sleepers must still wake one without an id, got %q", stderr.String())
+	}
+	asks, placed := fs.ensureCounts()
+	if asks != 1 || len(placed) != 0 {
+		t.Fatalf("one ask must wake one of the sleepers and place nothing, got %d asks, placed %v", asks, placed)
+	}
+	// the entry lands in the machine the ask woke, whichever of the
+	// sleepers the door answered
+	assertSSHCommonOptions(t, readLog(t, logPath), "vms1")
+	assertNoVMDeleted(t, fs, "waking one of several sleepers")
+}
+
 func TestAttachSingleLiveVM(t *testing.T) {
 	fs := newFakeServer(t)
 	fs.live = []string{"vma"}

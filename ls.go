@@ -15,6 +15,7 @@ type vmRow struct {
 	ExpiresAt float64 `json:"expires_at"`
 	Live      bool    `json:"live"`
 	Creating  bool    `json:"creating"`
+	Asleep    bool    `json:"asleep"`
 }
 
 func listVMs(a api) ([]vmRow, error) {
@@ -37,14 +38,23 @@ func listVMs(a api) ([]vmRow, error) {
 	return rows, nil
 }
 
+// durationLeft is the time the row's clock has left, as the door states it.
+func durationLeft(r vmRow) string {
+	return time.Until(time.Unix(int64(r.ExpiresAt), 0)).Round(time.Second).String()
+}
+
 func expiryLabel(r vmRow) string {
 	switch {
 	case r.Creating:
 		return "creating"
+	case r.Asleep:
+		// a sleeping machine is listed as itself, never as expired: the
+		// state word comes from the door's flag, not the clock
+		return "asleep"
 	case !r.Live:
 		return "expired"
 	default:
-		return time.Until(time.Unix(int64(r.ExpiresAt), 0)).Round(time.Second).String() + " left"
+		return durationLeft(r) + " left"
 	}
 }
 

@@ -44,6 +44,8 @@ type fakeServer struct {
 	keyUploaded string
 	pubkey      *string        // what /v1/me reports
 	live        []string       // sandbox ids reported as live by GET /v1/vm
+	asleep      []string       // ids reported as asleep: live=false, asleep=true, no clock (the door answers expires_at null)
+	creating    []string       // ids reported as mid-create: live=false, creating=true
 	expired     []string       // sandbox ids reported as not live by GET /v1/vm
 	deleteFail  map[string]int // id -> status code for failing DELETEs
 	create      func(w http.ResponseWriter, tries int)
@@ -129,6 +131,20 @@ func newFakeServer(t *testing.T) *fakeServer {
 		for _, id := range fs.placed {
 			rows = append(rows, map[string]any{
 				"sandbox_id": id, "expires_at": 9999999999.0, "live": true,
+			})
+		}
+		// sleep-model rows per the door's contract (public.py list_vm): an
+		// Asleep row is listed as itself — never "no VMs" — and carries no
+		// deadline, so a reader must take its state from the flag, never
+		// from the clock
+		for _, id := range fs.asleep {
+			rows = append(rows, map[string]any{
+				"sandbox_id": id, "expires_at": nil, "live": false, "asleep": true,
+			})
+		}
+		for _, id := range fs.creating {
+			rows = append(rows, map[string]any{
+				"sandbox_id": id, "expires_at": 9999999999.0, "live": false, "creating": true,
 			})
 		}
 		for _, id := range fs.expired {
@@ -414,7 +430,9 @@ func tempDirNamed(t *testing.T, name string) string {
 }
 
 // captureStdout runs fn with os.Stdout redirected to a pipe and returns what
-// was written — the machine-readable stream a GUI reads off the hidden engine.
+// was written — the reading half for every command that hardwires os.Stdout:
+// the status/ls renderings, and the machine-readable stream a GUI reads off
+// the hidden engine.
 func captureStdout(t *testing.T, fn func()) string {
 	t.Helper()
 	old := os.Stdout

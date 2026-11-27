@@ -51,15 +51,8 @@ usage:
                                  session never kills the VM — only zert
                                  kill ends it — an idle machine falls
                                  asleep and your next connect wakes it
-  zert attach [id] [ssh args..]
-                                 attach to your VM — the same shell comes
-                                 back, and the machine need not be
-                                 running: a sleeping one wakes (with one
-                                 VM the id is optional, with several
-                                 running it is required, with none it
-                                 says so); leaving this session never
-                                 kills the VM either
-  zert kill <id>..|all           terminate VM(s)
+  zert kill [<id>..|all]         terminate VM(s) — bare kill ends every
+                                 vm the listing answers, same as all
   zert extract <vm-path> [dir]   copy a file/dir from your live vm
                                  into [dir] (default: current dir); vm
                                  paths resolve against the vm user's home
@@ -106,8 +99,6 @@ func main() {
 		err = cmdLS(os.Args[2:])
 	case "vm":
 		err = cmdVM(os.Args[2:])
-	case "attach":
-		err = cmdAttach(os.Args[2:])
 	case "kill":
 		err = cmdKill(os.Args[2:])
 	case "extract":

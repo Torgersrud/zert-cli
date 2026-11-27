@@ -7,17 +7,17 @@ record is `~/dev/GLOSSARY.md` and wins on any conflict.
 ## Language
 
 **Entry**:
-Entering a VM — opening a connection to it, whether a fresh one (`zert vm`)
-or one already running (`zert attach`). The act; ssh is only the mechanism.
+Entering a VM — opening a connection to it (`zert vm`, `zert <path>`, the
+stable name). The act; ssh is only the mechanism.
 _Avoid_: ssh in, reconnect, login (the act is entering, not authenticating)
 
 **Attach**:
-As the product defines it (see `~/dev/GLOSSARY.md`): opening a connection to
-a running VM — the customer's word for an entry into a VM that already
-exists. Under the sleep model the machine need not be running: the escape
-hatch's raw id resolves through the ensure ask before the relay opens, so a
-sleeping machine is woken rather than reported expired.
-_Avoid_: reconnect, re- coinages for the act
+Opening a connection to a running VM — back into the same shell, running
+programs and scrollback included. What you're attached to is kept alive.
+The CLI has no attach command: the word names the act, and `zert vm`,
+`zert <path>` and the stable name are how the Customer makes one.
+_Avoid_: reconnect (the VM never left, so nothing is being re-), "ssh in"
+(that's the mechanism, not the act)
 
 **Ensure**:
 The door's one answer to "give me my machine" (`POST /v1/vm`): a live machine

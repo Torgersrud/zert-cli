@@ -12,6 +12,10 @@ import (
 	"strings"
 )
 
+// errNoLiveVM is the house wording for a flow that needs a running vm and
+// found none; the extract path points at the commands that make one.
+var errNoLiveVM = errors.New("no live vm — start one with `zert vm` or `zert <path>` first")
+
 // splitRemotePath splits a vm path into the directory to cd into and the
 // basename to archive, both suitable for the remote tar command. A path with
 // no slash (or a ~/ prefix) resolves against the vm user's home.

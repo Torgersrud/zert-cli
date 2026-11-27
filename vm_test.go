@@ -452,19 +452,16 @@ func TestVMQuota409ShowsList(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "quota reached") {
 		t.Fatalf("want quota-reached error, got %v", err)
 	}
-	if !strings.Contains(hint, "zert attach <id>") {
-		t.Fatalf("quota-409 hint must offer zert attach, got %q", hint)
+	// attach is gone, so the hint must not teach it — and the way forward
+	// must still be stated: the listing names the machines, kill frees a slot
+	if strings.Contains(hint, "attach") {
+		t.Fatalf("quota-409 hint must not teach the removed attach command, got %q", hint)
+	}
+	if !strings.Contains(hint, "zert ls") {
+		t.Fatalf("quota-409 hint must state a way forward that is not attach, got %q", hint)
 	}
 	if !strings.Contains(hint, "zert kill <id>") {
 		t.Fatalf("quota-409 hint must still offer zert kill, got %q", hint)
-	}
-	// the product glossary bans "re-" coinages for Attach (nothing is being
-	// re- — the vm never left), so the hint must use attacher wording
-	if strings.Contains(hint, "re-enter") {
-		t.Fatalf("quota-409 hint uses a banned re- word, got %q", hint)
-	}
-	if !strings.Contains(hint, "attaches to a live vm") {
-		t.Fatalf("quota-409 hint must say attach attaches to a live vm, got %q", hint)
 	}
 	// the 409 backstop is a refusal: one ask, no retry
 	asks, _ := fs.ensureCounts()

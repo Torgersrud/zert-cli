@@ -1,11 +1,11 @@
 package main
 
 // Shared test scaffolding for every path that runs ssh against a vm: the
-// interactive Entry (`zert vm`, `zert attach`, and the post-copy entry of
-// `zert <path>`), upload's copy stream, and `zert extract`.
+// interactive Entry (`zert vm` and the post-copy entry of `zert <path>`),
+// upload's copy stream, and `zert extract`.
 //
 // Nothing here opens a new seam. Every test drives a command runner
-// (vmRun/attachRun/uploadRun/extractRun) with injectable stdio against the
+// (vmRun/uploadRun/extractRun) with injectable stdio against the
 // two seams the production code already has: the API through the in-process
 // fake below plus the credentials setupHome writes, and the ssh binary
 // through the sshPath package var. What a test may observe is what a caller
@@ -391,7 +391,7 @@ func assertTokenInChildEnvOnly(t *testing.T, logged string) {
 }
 
 // assertNoVMDeleted pins that no ssh path Ends a vm's life: an Entry —
-// entered, attached or copied through — leaves the vm Detached at most, and
+// entered or copied through — leaves the vm Detached at most, and
 // only `zert kill` or an expired Idle window ends it. why names the path, so
 // a failure says which one drifted.
 func assertNoVMDeleted(t *testing.T, fs *fakeServer, why string) {

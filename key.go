@@ -33,7 +33,7 @@ func cmdKey(args []string) error {
 }
 
 // keyRegisterRun is `zert key register` with injectable stdio — the runner
-// seam the tests drive, like vmRun/attachRun. The key line is read from
+// seam the tests drive, like vmRun. The key line is read from
 // stdin whole, stripped of its trailing newline, and posted to /v1/me/key.
 // The server owns validity: a key it refuses comes back as its 400 reason
 // (mapped() in api.go), which main turns into exit 1 with the message on

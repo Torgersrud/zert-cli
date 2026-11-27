@@ -158,9 +158,7 @@ func TestUploadWakesSleepingVM(t *testing.T) {
 	if got := stderr.String(); !strings.Contains(got, "waking yours") || strings.Contains(got, "creating one") {
 		t.Fatalf("a sleeper must be announced as woken, never as created, got %q", got)
 	}
-	fs.mu.Lock()
-	asks, placed := fs.ensureAsks, append([]string(nil), fs.placed...)
-	fs.mu.Unlock()
+	asks, placed := fs.ensureCounts()
 	if asks != 1 || len(placed) != 0 {
 		t.Fatalf("one ask must wake the sleeper and place nothing, got %d asks, placed %v", asks, placed)
 	}

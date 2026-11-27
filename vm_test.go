@@ -250,10 +250,7 @@ func TestEnsureTwiceAnswersSameMachine(t *testing.T) {
 			t.Fatalf("both asks must answer the same machine, got %q", line)
 		}
 	}
-	fs.mu.Lock()
-	placed := append([]string(nil), fs.placed...)
-	asks := fs.ensureAsks
-	fs.mu.Unlock()
+	asks, placed := fs.ensureCounts()
 	if len(placed) != 1 || placed[0] != "vm123" {
 		t.Fatalf("the second ask must place nothing, placements: %v", placed)
 	}
@@ -307,10 +304,7 @@ func TestEnsure502RetryPlacesOneMachine(t *testing.T) {
 	if err := vmRun(nil, strings.NewReader(""), os.Stdout, io.Discard); err != nil {
 		t.Fatal(err)
 	}
-	fs.mu.Lock()
-	placed := append([]string(nil), fs.placed...)
-	asks := fs.ensureAsks
-	fs.mu.Unlock()
+	asks, placed := fs.ensureCounts()
 	if len(placed) != 1 || placed[0] != "vm123" {
 		t.Fatalf("retry places the one machine, later asks place nothing: %v", placed)
 	}
@@ -336,9 +330,7 @@ func TestEnsureRefusalNotRetried(t *testing.T) {
 		if err == nil {
 			t.Fatalf("%d: want the refusal as an error", code)
 		}
-		fs.mu.Lock()
-		asks, placed := fs.ensureAsks, append([]string(nil), fs.placed...)
-		fs.mu.Unlock()
+		asks, placed := fs.ensureCounts()
 		if asks != 1 {
 			t.Fatalf("%d: a refusal must not be retried, got %d asks", code, asks)
 		}
@@ -363,9 +355,7 @@ func TestEnsure502RetriedOnceOnly(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "bootstrap") {
 		t.Fatalf("want the 502 word after one retry, got %v", err)
 	}
-	fs.mu.Lock()
-	asks := fs.ensureAsks
-	fs.mu.Unlock()
+	asks, _ := fs.ensureCounts()
 	if asks != 2 {
 		t.Fatalf("the retry is one attempt: want 2 asks, got %d", asks)
 	}
@@ -458,9 +448,7 @@ func TestVMQuota409ShowsList(t *testing.T) {
 		t.Fatalf("quota-409 hint must say attach attaches to a live vm, got %q", hint)
 	}
 	// the 409 backstop is a refusal: one ask, no retry
-	fs.mu.Lock()
-	asks := fs.ensureAsks
-	fs.mu.Unlock()
+	asks, _ := fs.ensureCounts()
 	if asks != 1 {
 		t.Fatalf("a 409 refusal must not be retried, got %d asks", asks)
 	}

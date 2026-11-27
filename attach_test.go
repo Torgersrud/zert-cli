@@ -43,9 +43,7 @@ func TestAttachExpiredVMExplainsItself(t *testing.T) {
 	if !strings.Contains(err.Error(), "start a new one") {
 		t.Fatalf("the expiry error must say to start a new one, got %v", err)
 	}
-	fs.mu.Lock()
-	asks, placed := fs.ensureAsks, append([]string(nil), fs.placed...)
-	fs.mu.Unlock()
+	asks, placed := fs.ensureCounts()
 	if asks != 0 || len(placed) != 0 {
 		t.Fatalf("a row the door cannot hand over costs no ask and places nothing, got %d asks, placed %v", asks, placed)
 	}
@@ -77,9 +75,7 @@ func TestAttachByIDGoneSleeperRefusedByAnswer(t *testing.T) {
 	if !strings.Contains(err.Error(), "zert ls") {
 		t.Fatalf("the refusal must point at zert ls, got %v", err)
 	}
-	fs.mu.Lock()
-	asks := fs.ensureAsks
-	fs.mu.Unlock()
+	asks, _ := fs.ensureCounts()
 	if asks != 1 {
 		t.Fatalf("the gone sleeper costs exactly one ask, got %d", asks)
 	}
@@ -100,9 +96,7 @@ func TestAttachByIDGoneKeepsRefusal(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "no such vm vmgone") {
 		t.Fatalf("want the not-found wording kept, got %v", err)
 	}
-	fs.mu.Lock()
-	asks, placed := fs.ensureAsks, append([]string(nil), fs.placed...)
-	fs.mu.Unlock()
+	asks, placed := fs.ensureCounts()
 	if asks != 0 || len(placed) != 0 {
 		t.Fatalf("a gone id must cost no ask and place nothing, got %d asks, placed %v", asks, placed)
 	}
@@ -121,9 +115,7 @@ func TestAttachByIDLiveEnsuresNothing(t *testing.T) {
 	if err := attachRun([]string{"vma"}, strings.NewReader(""), os.Stdout, os.Stderr); err != nil {
 		t.Fatal(err)
 	}
-	fs.mu.Lock()
-	asks, placed := fs.ensureAsks, append([]string(nil), fs.placed...)
-	fs.mu.Unlock()
+	asks, placed := fs.ensureCounts()
 	if asks != 0 || len(placed) != 0 {
 		t.Fatalf("a live id must be entered without an ask, got %d asks, placed %v", asks, placed)
 	}
@@ -144,9 +136,7 @@ func TestAttachByIDWakesSleepingVM(t *testing.T) {
 	if !strings.Contains(stderr.String(), "waking") {
 		t.Fatalf("a sleeper must be announced as woken, got %q", stderr.String())
 	}
-	fs.mu.Lock()
-	asks, placed := fs.ensureAsks, append([]string(nil), fs.placed...)
-	fs.mu.Unlock()
+	asks, placed := fs.ensureCounts()
 	if asks != 1 || len(placed) != 0 {
 		t.Fatalf("one ask must wake the named sleeper and place nothing, got %d asks, placed %v", asks, placed)
 	}
@@ -375,9 +365,7 @@ func TestAttachNoIDWakesSleepingVM(t *testing.T) {
 	if !strings.Contains(stderr.String(), "waking yours") {
 		t.Fatalf("the sleeper must be announced as woken, got %q", stderr.String())
 	}
-	fs.mu.Lock()
-	asks, placed := fs.ensureAsks, append([]string(nil), fs.placed...)
-	fs.mu.Unlock()
+	asks, placed := fs.ensureCounts()
 	if asks != 1 || len(placed) != 0 {
 		t.Fatalf("one ask must wake the sleeper and place nothing, got %d asks, placed %v", asks, placed)
 	}

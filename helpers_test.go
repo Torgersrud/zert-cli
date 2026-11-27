@@ -199,6 +199,15 @@ func newFakeServer(t *testing.T) *fakeServer {
 	return fs
 }
 
+// ensureCounts reads the fake's ensure bookkeeping in one locked pass:
+// every ask the door heard, and the placements among them. Every test that
+// asserts on the ask reads it through here, so the locking exists once.
+func (fs *fakeServer) ensureCounts() (asks int, placed []string) {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	return fs.ensureAsks, append([]string(nil), fs.placed...)
+}
+
 func strptr(s string) *string { return &s }
 
 // testToken is the session token every fake login stores, and therefore the
@@ -434,21 +443,22 @@ func tempDirNamed(t *testing.T, name string) string {
 	return dir
 }
 
-// captureStdout runs fn with os.Stdout redirected to a pipe and returns what
-// was written — the reading half for every command that hardwires os.Stdout:
-// the status/ls renderings, and the machine-readable stream a GUI reads off
-// the hidden engine.
-func captureStdout(t *testing.T, fn func()) string {
+// captureOutput runs fn with the standard stream dst points at redirected
+// to a pipe and returns what was written — the reading half for every
+// command that hardwires os.Stdout or os.Stderr: the status/ls renderings,
+// the machine-readable stream a GUI reads off the hidden engine, and the
+// tunnel's close-code notices.
+func captureOutput(t *testing.T, dst **os.File, fn func()) string {
 	t.Helper()
-	old := os.Stdout
+	old := *dst
 	r, w, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
 	}
-	os.Stdout = w
+	*dst = w
 	fn()
 	w.Close()
-	os.Stdout = old
+	*dst = old
 	b, err := io.ReadAll(r)
 	if err != nil {
 		t.Fatal(err)
@@ -456,16 +466,14 @@ func captureStdout(t *testing.T, fn func()) string {
 	return string(b)
 }
 
-// captureStderr runs fn with os.Stderr redirected to a pipe and returns what
-// was written. Only needed for code that hardwires os.Stderr.
+// captureStdout returns what fn wrote to os.Stdout.
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	return captureOutput(t, &os.Stdout, fn)
+}
+
+// captureStderr returns what fn wrote to os.Stderr.
 func captureStderr(t *testing.T, fn func()) string {
 	t.Helper()
-	old := os.Stderr
-	r, w, _ := os.Pipe()
-	os.Stderr = w
-	fn()
-	w.Close()
-	os.Stderr = old
-	b, _ := io.ReadAll(r)
-	return string(b)
+	return captureOutput(t, &os.Stderr, fn)
 }

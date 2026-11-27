@@ -444,8 +444,8 @@ func TestTunnelMePlacesTheFirstMachine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	asks, placed := fs.ensureCounts()
 	fs.mu.Lock()
-	asks, placed := fs.ensureAsks, append([]string(nil), fs.placed...)
 	paths := append([]string(nil), fs.tunnelPaths...)
 	fs.mu.Unlock()
 	if asks != 1 || len(placed) != 1 || placed[0] != "vm123" {

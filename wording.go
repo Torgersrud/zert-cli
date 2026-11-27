@@ -23,4 +23,11 @@ var (
 	// is neither the stable name nor a valid id is refused before any
 	// ask is made.
 	errInvalidVMID = errors.New("invalid vm id")
+
+	// errUnusualListing is the several-row truth: under the one-machine
+	// law a listing that does not name one machine is a server-side
+	// anomaly, no command may guess which row is the Customer's, and
+	// `zert ls` is where the server's raw answer shows. Status admits
+	// it; every path that would act on a row refuses on it.
+	errUnusualListing = errors.New("your machine listing is unusual — `zert ls` shows what the server says")
 )

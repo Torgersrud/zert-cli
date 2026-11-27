@@ -83,6 +83,67 @@ func hasUserRemoteCommand(sshArgs []string) bool {
 	return false
 }
 
+// sshScan is what one walk of the ssh argv grammar answers: the args to
+// forward verbatim to ssh, whether the deprecated --keep was swallowed (it
+// changes nothing, and the caller owns its deprecation notice), and
+// whether the forwarded args carry the start of a user-supplied remote
+// command — the first token ssh would read as neither an option nor an
+// option's value.
+type sshScan struct {
+	args      []string
+	sawKeep   bool
+	remoteCmd bool
+}
+
+// scanSSHArgs is the one scanner of the ssh argv grammar: a single walk
+// answers everything any path asks of the customer's ssh arguments — the
+// args forwarded verbatim (everything after "--" is passthrough), the
+// --keep swallow, and the bare-token position where a user remote command
+// starts. The option table above is the grammar's one copy: a change to it
+// — a new option-with-value letter, long options — lands here and nowhere
+// else, because every consumer reads this scan and nothing walks the args
+// again.
+func scanSSHArgs(args []string) sshScan {
+	var scan sshScan
+	options := true       // "--" ends option territory: past it, everything is ssh's
+	valuePending := false // the next forwarded token is an option's value, never positional
+	for _, a := range args {
+		if options {
+			switch a {
+			case "--":
+				options = false
+				continue
+			case "--keep", "-keep":
+				// swallowed wherever option territory finds it — even
+				// blind, in an option's value position — because it
+				// changes nothing wherever it appears
+				scan.sawKeep = true
+				continue
+			}
+		}
+		scan.args = append(scan.args, a)
+		if scan.remoteCmd {
+			continue // the command started earlier; the rest is its words
+		}
+		if valuePending {
+			valuePending = false // an option's value never starts a command
+			continue
+		}
+		if strings.HasPrefix(a, "-") && a != "-" {
+			// unknown option letters count as plain flags, so a following
+			// bare token lands on the command side — erring that way
+			// leaves the argv unwrapped, the safe reading of "passed
+			// through"
+			if len(a) == 2 && strings.ContainsRune(sshOptsWithArg, rune(a[1])) {
+				valuePending = true
+			}
+			continue
+		}
+		scan.remoteCmd = true // the bare token: a user command starts here
+	}
+	return scan
+}
+
 // interactiveRemoteCmd is the remote command an interactive entry runs in
 // place of a bare login shell: it enters — creating when missing — the one
 // tmux session "zert", so a Detach (detach key, dropped link, dead laptop)

@@ -99,7 +99,9 @@ func TestMeSessionExpiredMapping(t *testing.T) {
 	}))
 	defer ts.Close()
 	_, err := getMe(api{host: ts.URL, token: "stale"})
-	if err == nil || !strings.Contains(err.Error(), "session expired — run `zert login`") {
+	// the exact wording is pinned once in wording_test.go; this test pins
+	// the mapping: a server 401 becomes the session-expired error
+	if err == nil || !strings.Contains(err.Error(), "session expired") {
 		t.Fatalf("want session-expired message, got %v", err)
 	}
 }

@@ -45,9 +45,10 @@ func wsURL(host, id string) (string, error) {
 // server refuses an id that is not one of the Customer's machines and a
 // sleeping one with the same bare close and no reason, so the message
 // admits both and teaches the way back — connecting is what wakes a
-// sleeper.
+// sleeper. 4401 and 4410 name the shared wordings (wording.go): the table
+// translates wire codes, it never restates a rule.
 var closeCodeMsg = map[websocket.StatusCode]string{
-	4401: "session expired — run `zert login`",
+	4401: errSessionExpired.Error(),
 	4403: "no such vm (or not yours), or it is asleep — connecting to it (zert vm / ssh zert) wakes it",
 	4410: "vm expired — start a new one with `zert vm`",
 }
@@ -108,7 +109,7 @@ func dialWS(ctx context.Context, u, token string) (*websocket.Conn, error) {
 		}
 		if resp != nil {
 			if resp.StatusCode == http.StatusUnauthorized {
-				return nil, errors.New(closeCodeMsg[4401])
+				return nil, errSessionExpired
 			}
 			return nil, err
 		}

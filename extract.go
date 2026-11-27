@@ -180,7 +180,7 @@ func extractRun(vmPathArg, dest string, stderr io.Writer) error {
 	}()
 	rows, err := listVMs(a)
 	if meErr := <-meCh; meErr != nil {
-		return meErr // 401 -> "session expired — run `zert login`"
+		return meErr // 401 -> errSessionExpired
 	}
 	if err != nil {
 		return err

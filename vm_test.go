@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -132,6 +133,96 @@ func TestVMSSHOptionArgsStillWrap(t *testing.T) {
 	// command still lands in the tmux session
 	if !strings.Contains(line, "-L 8080:localhost:80 user@vm123 "+TmuxWrapCmd) {
 		t.Fatalf("option-only ssh args lost the tmux wrap: %s", line)
+	}
+}
+
+// TestVMSSHGrammarAnsweredInOneWalk pins the grammar's combined story: the
+// option table, the bare-token position and the --keep swallow are one
+// scanner's answers from one walk of the customer's ssh args, so a grammar
+// change — long options, a new option-with-value letter — is one edit in
+// that scanner and nowhere else. One invocation needs all three answers at
+// once, and every one is read off the single ssh call it produces: --keep
+// is swallowed with exactly one notice, -L's value is judged an option's
+// value and never a remote command, "--" hands the rest to ssh, and the
+// bare "uptime" starting there stands the tmux wrap down while reaching
+// ssh verbatim before the destination.
+func TestVMSSHGrammarAnsweredInOneWalk(t *testing.T) {
+	fs := newFakeServer(t)
+	setupHome(t, fs.URL)
+	logPath := fakeSSH(t)
+	fakeTTY(t)
+	var stderr bytes.Buffer
+
+	err := vmRun([]string{"--keep", "-L", "8080:localhost:80", "--", "uptime"},
+		strings.NewReader(""), os.Stdout, &stderr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(stderr.String(), "obsolete"); n != 1 {
+		t.Fatalf("the swallow answers saw-keep with one notice, got %d in %q", n, stderr.String())
+	}
+	line := argLines(readLog(t, logPath))[0]
+	if strings.Contains(line, "keep") {
+		t.Fatalf("--keep is swallowed, never forwarded to ssh: %s", line)
+	}
+	if !strings.Contains(line, "-L 8080:localhost:80 uptime user@vm123") ||
+		!strings.HasSuffix(line, "uptime user@vm123") {
+		t.Fatalf("the forwarded args reach ssh verbatim before the destination: %s", line)
+	}
+	if strings.Contains(line, "tmux") || strings.Contains(line, " -t ") {
+		t.Fatalf("the bare token is the user's command, so the wrap stands down: %s", line)
+	}
+}
+
+// TestScanSSHArgs pins the ssh argv grammar's one walk, case by case: a
+// single pass over the customer's args must answer the args forwarded
+// verbatim to ssh, whether the deprecated --keep was swallowed, and where
+// a user-supplied remote command starts — the three answers every entry
+// path consumes. The option letters are read off sshOptsWithArg itself, so
+// a grammar change — a new option-with-value letter, long options — is one
+// edit in the scanner and this table follows it.
+func TestScanSSHArgs(t *testing.T) {
+	// every option letter that takes its value as the next token: the
+	// value is never positional, and the first bare token after it starts
+	// the user's command
+	for _, r := range sshOptsWithArg {
+		in := []string{"-" + string(r), "value", "uptime"}
+		got := scanSSHArgs(in)
+		if got.sawKeep || !got.remoteCmd || !slices.Equal(got.args, in) {
+			t.Fatalf("-%c: want %q forwarded with a remote command and no keep, got %+v", r, in, got)
+		}
+	}
+
+	for _, tc := range []struct {
+		name              string
+		in                []string
+		wantArgs          []string
+		wantKeep, wantCmd bool
+	}{
+		{"no args", nil, nil, false, false},
+		{"keep is swallowed, long form", []string{"--keep"}, nil, true, false},
+		{"keep is swallowed, short form", []string{"-keep"}, nil, true, false},
+		{"keep between an option and its value is swallowed blind",
+			[]string{"-L", "--keep", "8080:localhost:80"},
+			[]string{"-L", "8080:localhost:80"}, true, false},
+		{"keep after the command is still swallowed",
+			[]string{"uptime", "--keep"}, []string{"uptime"}, true, true},
+		{"double dash ends the swallow",
+			[]string{"--", "--keep"}, []string{"--keep"}, false, false},
+		{"double dash hands the rest to ssh",
+			[]string{"--keep", "--", "uptime"}, []string{"uptime"}, true, true},
+		{"unknown option letter is a plain flag",
+			[]string{"-Z", "uptime"}, []string{"-Z", "uptime"}, false, true},
+		{"a lone dash is a bare token",
+			[]string{"-"}, []string{"-"}, false, true},
+		{"a trailing option never finds its value",
+			[]string{"-L"}, []string{"-L"}, false, false},
+	} {
+		got := scanSSHArgs(tc.in)
+		if !slices.Equal(got.args, tc.wantArgs) || got.sawKeep != tc.wantKeep || got.remoteCmd != tc.wantCmd {
+			t.Fatalf("%s: scanSSHArgs(%q) = %+v, want args %q keep=%v cmd=%v",
+				tc.name, tc.in, got, tc.wantArgs, tc.wantKeep, tc.wantCmd)
+		}
 	}
 }
 

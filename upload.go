@@ -194,10 +194,22 @@ func humanBytes(n int64) string {
 // streamed as a tar.gz through a single ssh exec (`tar -xzf - -C ~`), which
 // avoids scp's per-file round trips and compresses the whole tree as one
 // stream (compression happens client-side, before the encrypted tunnel).
-// sshArgs comes from parseSSHArgs and applies to the interactive session
-// entered after the copy — always when this call created the vm, and also
-// for a pre-existing live vm when the user passed extra args.
+// sshArgs are the customer's ssh arguments after the path, unparsed: the
+// one scan that answers them — the args forwarded verbatim, the swallowed
+// --keep with its notice on stderr, where a user command starts — happens
+// here, inside the runner, and its answers apply to the interactive Entry
+// after the copy — always when this call created the vm, and also for a
+// pre-existing live vm when the scan forwards args.
 func uploadRun(arg string, sshArgs []string, stdin io.Reader, stdout, stderr io.Writer) error {
+	// the one walk: everything the grammar answers — the args ssh gets,
+	// the swallowed --keep, where the user's command starts — is answered
+	// here, once, before the copy decides anything, so even a refused
+	// upload has warned for a swallowed --keep
+	scan := scanSSHArgs(sshArgs)
+	if scan.sawKeep {
+		warnKeepDeprecated(stderr)
+	}
+
 	src := expandTilde(arg)
 	trimmed := strings.TrimRight(src, "/")
 	base := filepath.Base(trimmed)
@@ -290,9 +302,9 @@ func uploadRun(arg string, sshArgs []string, stdin io.Reader, stdout, stderr io.
 
 	// leaving the entered vm never kills it: only `zert kill` or its expiry
 	// ends a vm — and --keep no longer decides anything either.
-	if created || len(sshArgs) > 0 {
+	if created || len(scan.args) > 0 {
 		fmt.Fprintf(stderr, "entering vm %s …\n", vm.SandboxID)
-		return enterVM(creds, vm, sshArgs, stdin, stdout, stderr)
+		return enterVM(creds, vm, scan, stdin, stdout, stderr)
 	}
 	return nil
 }
@@ -301,6 +313,5 @@ func cmdUpload(args []string) error {
 	if len(args) < 1 {
 		return errors.New("usage: zert <path> [ssh args..]")
 	}
-	sshArgs := parseSSHArgs(os.Stderr, args[1:])
-	return uploadRun(args[0], sshArgs, os.Stdin, os.Stdout, os.Stderr)
+	return uploadRun(args[0], args[1:], os.Stdin, os.Stdout, os.Stderr)
 }

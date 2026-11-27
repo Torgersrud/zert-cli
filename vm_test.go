@@ -267,6 +267,25 @@ func TestEnsureTwiceAnswersSameMachine(t *testing.T) {
 	}
 }
 
+// TestEnsureExpiredRowStillMeansCreating pins the wording's truth: dead
+// rows are not machines the ask can answer, so a customer whose only row
+// is expired is told a machine is being created — never "found" — because
+// ensure places one instead of answering the dead row.
+func TestEnsureExpiredRowStillMeansCreating(t *testing.T) {
+	fs := newFakeServer(t)
+	fs.expired = []string{"vmdead"}
+	setupHome(t, fs.URL)
+	fakeSSH(t)
+	var stderr bytes.Buffer
+
+	if err := vmRun(nil, strings.NewReader(""), os.Stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stderr.String(), "creating vm") || strings.Contains(stderr.String(), "found your vm") {
+		t.Fatalf("an expired row is a dead machine: the wording must say creating, got %q", stderr.String())
+	}
+}
+
 // TestEnsure502RetryPlacesOneMachine routes the ticket's headline through
 // the retry itself: an ask that dies on the door's far side (502) places
 // nothing, the retry places the one machine, and a later ask answers that

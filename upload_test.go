@@ -178,6 +178,25 @@ func TestUploadWakesSleepingVM(t *testing.T) {
 	assertNoVMDeleted(t, fs, "an upload that wakes a sleeper")
 }
 
+// TestUploadExpiredRowSaysCreating pins the copy-in path's half of the
+// same truth: a dead row is not a sleeper, so a customer whose only row is
+// expired hears a machine being placed — never "waking yours".
+func TestUploadExpiredRowSaysCreating(t *testing.T) {
+	fs := newFakeServer(t)
+	fs.expired = []string{"vmdead"}
+	setupHome(t, fs.URL)
+	fakeSSH(t)
+	var stderr bytes.Buffer
+	dir := tempDirNamed(t, "mydir")
+
+	if err := uploadRun(dir, nil, strings.NewReader(""), os.Stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stderr.String(), "creating one") || strings.Contains(stderr.String(), "waking yours") {
+		t.Fatalf("an expired row must be told creating, never waking, got %q", stderr.String())
+	}
+}
+
 func TestUploadSSHArgsForwarded(t *testing.T) {
 	fs := newFakeServer(t)
 	setupHome(t, fs.URL)

@@ -169,6 +169,28 @@ func TestExtractNoLiveVM(t *testing.T) {
 	assertNoSSHSpawned(t, logPath, "no live vm")
 }
 
+// TestExtractSeveralRowsRefusesInsteadOfPicking pins the several-row
+// anomaly's copy-out half: a listing that does not name one machine is
+// refused before anything streams — no ssh spawn, no ensure ask — never
+// resolved by streaming out of whichever row sorted first. The refusal's
+// customer rendering is the copy arms' own (landing (c) of spec #30);
+// what this pins is that no bytes move.
+func TestExtractSeveralRowsRefusesInsteadOfPicking(t *testing.T) {
+	fs := newFakeServer(t)
+	setupHome(t, fs.URL)
+	logPath := fakeSSH(t)
+	fs.live = []string{"vmA", "vmB"}
+	fs.create = func(w http.ResponseWriter, _ int) {
+		t.Error("a several-row refusal must never reach the ensure ask")
+		http.Error(w, `{"detail":"no"}`, 500)
+	}
+
+	if err := extractRun("~/out", t.TempDir(), os.Stderr); err == nil {
+		t.Fatal("a several-row listing must be refused, never picked from")
+	}
+	assertNoSSHSpawned(t, logPath, "a several-row listing")
+}
+
 func TestExtractTarSlipRefused(t *testing.T) {
 	fs := newFakeServer(t)
 	setupHome(t, fs.URL)

@@ -197,6 +197,30 @@ func TestUploadExpiredRowSaysCreating(t *testing.T) {
 	}
 }
 
+// TestUploadSeveralRowsRefusesInsteadOfPicking pins the several-row
+// anomaly's copy-in half: a listing that does not name one machine is
+// refused before anything streams — no ssh spawn, no ensure ask — never
+// resolved by silently streaming into whichever row sorted first. What
+// this pins is that no bytes move; the refusal's customer rendering is
+// the copy arms' own (landing (c) of spec #30).
+func TestUploadSeveralRowsRefusesInsteadOfPicking(t *testing.T) {
+	fs := newFakeServer(t)
+	setupHome(t, fs.URL)
+	logPath := fakeSSH(t)
+	fs.live = []string{"vmA", "vmB"}
+	fs.create = func(w http.ResponseWriter, _ int) {
+		t.Error("a several-row refusal must never reach the ensure ask")
+		http.Error(w, `{"detail":"no"}`, 500)
+	}
+	dir := tempDirNamed(t, "mydir")
+
+	if err := uploadRun(dir, nil, strings.NewReader(""), os.Stdout, os.Stderr); err == nil {
+		t.Fatal("a several-row listing must be refused, never picked from")
+	}
+	assertNoSSHSpawned(t, logPath, "a several-row listing")
+	assertNoVMDeleted(t, fs, "a refused upload")
+}
+
 func TestUploadSSHArgsForwarded(t *testing.T) {
 	fs := newFakeServer(t)
 	setupHome(t, fs.URL)

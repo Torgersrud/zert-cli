@@ -22,8 +22,24 @@ func usage() {
 usage:
   zert login [--host URL] [--insecure]
                                  authenticate and store credentials
+  zert login --stdin [--host URL] [--insecure]
+                                 non-interactive login for GUIs: the
+                                 email then the password arrive as
+                                 two lines on stdin — never argv, so
+                                 nothing shows in process listings; the
+                                 outcome is one machine-readable word on
+                                 stdout (ok, bad-credentials,
+                                 unprovisioned, rate-limited,
+                                 error: <reason>) with the matching
+                                 exit status 0-4
   zert logout                    delete stored credentials
   zert me                        show profile, quota, pubkey
+  zert key register              register the account's ssh public key —
+                                 the key line arrives on stdin, never argv
+                                 (zert key register < ~/.ssh/id_ed25519.pub);
+                                 one account has one active laptop, so
+                                 registering over a previous key displaces
+                                 that laptop — its key stops working
   zert ls                        list your VMs and their time left
   zert vm [ssh args..]           create a VM and ssh into it — leaving the
                                  session never kills the VM; only zert kill
@@ -68,6 +84,12 @@ func main() {
 		err = cmdLogout(os.Args[2:])
 	case "me":
 		err = cmdMe(os.Args[2:])
+	case "key":
+		if looksLikePath(cmd) { // a local file/dir named "key" still uploads
+			err = cmdUpload(os.Args[1:])
+		} else {
+			err = cmdKey(os.Args[2:])
+		}
 	case "ls":
 		err = cmdLS(os.Args[2:])
 	case "vm":

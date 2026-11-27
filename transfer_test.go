@@ -105,6 +105,27 @@ func TestTransferFromVMClosedPipeIsFallout(t *testing.T) {
 	}
 }
 
+// TestTransferFromVMDrainsTheTailTheCodecLeaves pins the pipe's tail
+// drain: a codec may stop reading before the stream ends — tar stops at
+// its end-of-archive marker — and the child's stream copy must still
+// finish instead of stalling on a pipe nobody reads, with the drained
+// bytes still counted in the answer.
+func TestTransferFromVMDrainsTheTailTheCodecLeaves(t *testing.T) {
+	body := strings.Repeat("z", 256*1024)
+	compressed, err := runTransferFromVM(t, streamFile(t, body), "",
+		func(r io.Reader) error {
+			_, err := io.ReadAll(io.LimitReader(r, 4*1024))
+			return err
+		},
+		func(e error) error { return e })
+	if err != nil {
+		t.Fatalf("the tail the codec left must not fail the copy: %v", err)
+	}
+	if compressed != int64(len(body)) {
+		t.Fatalf("compressed = %d, want %d: the drained tail still counts", compressed, len(body))
+	}
+}
+
 // TestTransferFromVMSpawnFailureReleasesTheCodec pins the module's
 // spawn-failure handling: a child that never started is gone the same way
 // a finished one is — the closed pipe hands the codec its end instead of a

@@ -63,6 +63,13 @@ func transferFromVM(creds *Credentials, vm *vmRow, remoteCmd string, stderr io.W
 	codecDone := make(chan error, 1)
 	go func() {
 		err := unpack(cr)
+		if err == nil {
+			// a codec may stop reading before the stream ends — tar stops at
+			// its end-of-archive marker — so drain the tail: the child's
+			// stdout copy must finish instead of stalling on a pipe nobody
+			// reads anymore, and the drained bytes still count
+			_, err = io.Copy(io.Discard, cr)
+		}
 		if err != nil {
 			// abort: close the read end so a still-writing child sees EPIPE
 			// and exec's stdout copy unblocks Wait — raw, the codec's own

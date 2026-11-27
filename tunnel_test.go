@@ -156,7 +156,11 @@ func TestTunnelCloseCodes(t *testing.T) {
 		want string
 	}{
 		{4401, "session expired"},
-		{4403, "no such vm"},
+		// the sleeper's refusal shares the wire with the stranger's: the
+		// server closes a sleeping id and an id that is not the
+		// Customer's with the same bare 4403 and no reason, so the
+		// message must cover both truths and teach the way back
+		{4403, "no such vm (or not yours), or it is asleep — connecting to it (zert vm / ssh zert) wakes it"},
 		{4410, "vm expired — start a new one"},
 	} {
 		code := tc.code

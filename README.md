@@ -36,7 +36,10 @@ zert vm                         # create a VM and ssh into it (leaving never kil
 zert attach                     # back into a running VM (same shell, id optional)
 zert ./myproject                # run a zert vm with your repo
 zert extract ~/report.pdf       # copy a file/dir out of your live vm
-zert ls                         # list your VMs and their time left
+zert status                     # your machine in plain words: running with
+                                 # its time left, asleep, or none yet
+zert ls                         # the technical listing: raw ids with state
+                                 # words and time left
 zert kill <id>                  # terminate a VM
 zert kill all                   # terminate all your VMs
 zert --version
@@ -46,13 +49,21 @@ zert --version
 session afterwards; when you leave, that VM keeps running. If one is
 already live it just copies into it.
 
+`zert status` answers the one question — is my machine on? — in plain
+words: a running machine says so with the time its Idle window has left,
+a sleeping one says `asleep` (it wakes on your next connect, with
+everything as you left it), one still being made says so, and having
+none says that and points at `zert vm`. A state this version of the CLI
+has never seen is admitted, not guessed at. Raw ids appear in `zert ls`
+and nowhere else on the customer-facing surface.
+
 `zert attach [id]` is how you come back to a VM that is still running: with
 exactly one live VM the id is optional, with several you have to name one
 (`zert ls` lists them), and with none it points you at `zert vm`. An attach
 to a VM whose Idle window has run out says so instead of hanging:
 "vm <id> expired — start a new one with `zert vm`". Leaving an attached
-session never kills the VM either — only `zert kill` or an expired Idle
-window ends it.
+session never kills the VM either — only `zert kill` ends it: an idle
+machine falls asleep, and your next connect wakes it.
 
 Every interactive entry (`zert vm`, `zert attach`, and the entry after a
 copy) runs inside one tmux session in the VM, named `zert`. That is what
@@ -76,7 +87,8 @@ To add args for the zert ssh session, pass them after the command
 (e.g. `zert vm -L 8080:localhost:8080` or `zert ./myproject -L 8080:localhost:8080`).
 With `zert <path>`, extra ssh args also make you enter an already-running
 VM after the copy. Entering — and leaving — never ends a VM either way;
-`zert kill` (or an expired Idle window) is the only way one dies. The old
+`zert kill` is the only way one dies — an idle machine falls asleep
+instead. The old
 `--keep` flag is still accepted on every entry command (`zert vm`,
 `zert attach`, `zert <path>`) for existing scripts; it prints
 `--keep is obsolete — vms no longer die on exit` and changes nothing.

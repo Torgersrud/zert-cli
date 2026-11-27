@@ -41,6 +41,8 @@ type fakeServer struct {
 	keyUploaded string
 	pubkey      *string        // what /v1/me reports
 	live        []string       // sandbox ids reported as live by GET /v1/vm
+	asleep      []string       // ids reported as asleep: live=false, asleep=true, no clock (the door answers expires_at null)
+	creating    []string       // ids reported as mid-create: live=false, creating=true
 	expired     []string       // sandbox ids reported as not live by GET /v1/vm
 	deleteFail  map[string]int // id -> status code for failing DELETEs
 	create      func(w http.ResponseWriter, tries int)
@@ -89,6 +91,20 @@ func newFakeServer(t *testing.T) *fakeServer {
 		for _, id := range fs.live {
 			rows = append(rows, map[string]any{
 				"sandbox_id": id, "expires_at": 9999999999.0, "live": true,
+			})
+		}
+		// sleep-model rows per the door's contract (public.py list_vm): an
+		// Asleep row is listed as itself — never "no VMs" — and carries no
+		// deadline, so a reader must take its state from the flag, never
+		// from the clock
+		for _, id := range fs.asleep {
+			rows = append(rows, map[string]any{
+				"sandbox_id": id, "expires_at": nil, "live": false, "asleep": true,
+			})
+		}
+		for _, id := range fs.creating {
+			rows = append(rows, map[string]any{
+				"sandbox_id": id, "expires_at": 9999999999.0, "live": false, "creating": true,
 			})
 		}
 		for _, id := range fs.expired {
@@ -352,6 +368,21 @@ func tempDirNamed(t *testing.T, name string) string {
 		t.Fatal(err)
 	}
 	return dir
+}
+
+// captureStdout runs fn with os.Stdout redirected to a pipe and returns what
+// was written — the reading half of the status/ls rendering tests, whose
+// commands hardwire os.Stdout the way me does.
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	fn()
+	w.Close()
+	os.Stdout = old
+	b, _ := io.ReadAll(r)
+	return string(b)
 }
 
 // captureStderr runs fn with os.Stderr redirected to a pipe and returns what

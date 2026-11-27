@@ -24,10 +24,15 @@ usage:
                                  authenticate and store credentials
   zert logout                    delete stored credentials
   zert me                        show profile, quota, pubkey
-  zert ls                        list your VMs and their time left
+  zert status                    your machine in plain words — running with
+                                 its time left, asleep, or none yet
+  zert ls                        the technical listing: raw ids with state
+                                 words (running, asleep, creating) and
+                                 time left
   zert vm [ssh args..]           create a VM and ssh into it — leaving the
                                  session never kills the VM; only zert kill
-                                 or an expired Idle window ends it
+                                 ends it — an idle machine falls asleep
+                                 and your next connect wakes it
   zert attach [id] [ssh args..]
                                  attach to a running VM — the same shell
                                  comes back (with one live VM the id is
@@ -68,6 +73,8 @@ func main() {
 		err = cmdLogout(os.Args[2:])
 	case "me":
 		err = cmdMe(os.Args[2:])
+	case "status":
+		err = cmdStatus(os.Args[2:])
 	case "ls":
 		err = cmdLS(os.Args[2:])
 	case "vm":

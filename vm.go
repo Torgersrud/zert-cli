@@ -73,6 +73,19 @@ func hasAnswerableVM(rows []vmRow) bool {
 	return false
 }
 
+// wakeOrCreate announces the ensure ask a customer without a live machine
+// makes, and makes it: the machine is theirs and asleep — woken — or
+// nothing answerable is listed and one is placed. The wording lives here
+// once, so the escape hatch and the copy-in path tell the same story.
+func wakeOrCreate(a api, rows []vmRow, stderr io.Writer) (*vmRow, error) {
+	if hasAsleepVM(rows) {
+		fmt.Fprintln(stderr, "no live vm — waking yours …")
+	} else {
+		fmt.Fprintln(stderr, "no live vm — creating one …")
+	}
+	return ensureVM(a)
+}
+
 // ensureVM asks the door for the Customer's one machine — POST /v1/vm is the
 // ensure call ("give me my machine"): a live machine is answered as it is, an
 // Asleep one is woken, and only a Customer with nothing gets one placed. The

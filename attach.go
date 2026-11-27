@@ -108,8 +108,7 @@ func resolveAttachTarget(a api, rows []vmRow, id string, stderr io.Writer) (*vmR
 	// whatever machine it answers is the one machine — only a Customer
 	// with nothing at all is sent to the commands that make one
 	if hasAsleepVM(rows) {
-		fmt.Fprintln(stderr, "no live vm — waking yours …")
-		return ensureVM(a)
+		return wakeOrCreate(a, rows, stderr)
 	}
 	return nil, errNoLiveVM
 }

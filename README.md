@@ -64,7 +64,11 @@ have to name one (`zert ls` lists them), and with none it points you at
 `zert vm`. A machine that fell asleep wakes when you attach — a few
 seconds' pause, then the same shell, with everything as you left it. An attach to an id
 that is gone or not yours says so: "no such vm <id> — zert ls lists
-your vms". Leaving an attached session never kills the VM either — only
+your vms" — and that refusal can be the reason a machine exists: waking a
+named sleeper goes through the door's one ensure ask, which places a fresh
+machine when the sleeper turns out genuinely gone (the door has no
+wake-by-id that places nothing), so `zert status` may show a machine the
+refusal minted. Leaving an attached session never kills the VM either — only
 `zert kill` ends it: an idle machine falls asleep, and your next connect
 wakes it.
 

@@ -72,7 +72,14 @@ func resolveAttachTarget(a api, rows []vmRow, id string, stderr io.Writer) (*vmR
 					// ensure settled the gone sleeper and placed the
 					// fresh machine: the named id is not one the
 					// Customer has, and the fresh one is not the
-					// machine they asked to enter
+					// machine they asked to enter. The refusal
+					// minted that machine — ensure is the door's
+					// only wake path and no non-placing
+					// wake-by-id exists, so an ask for a sleeper
+					// that turns out genuinely gone places one by
+					// the door's contract, and this guard declines
+					// to enter what the Customer did not name
+					// (TestAttachByIDGoneSleeperRefusedByAnswer)
 					return nil, errNoSuchVM(id)
 				}
 				return vm, nil

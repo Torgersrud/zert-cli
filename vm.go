@@ -73,10 +73,20 @@ func hasAnswerableVM(rows []vmRow) bool {
 	return false
 }
 
+// hasAsleepVM reports whether any listed row is a sleeper.
+func hasAsleepVM(rows []vmRow) bool {
+	for _, r := range rows {
+		if r.Asleep {
+			return true
+		}
+	}
+	return false
+}
+
 // wakeOrCreate announces the ensure ask a customer without a live machine
 // makes, and makes it: the machine is theirs and asleep — woken — or
 // nothing answerable is listed and one is placed. The wording lives here
-// once, so the escape hatch and the copy-in path tell the same story.
+// once, so every path that asks from a listing tells the same story.
 func wakeOrCreate(a api, rows []vmRow, stderr io.Writer) (*vmRow, error) {
 	if hasAsleepVM(rows) {
 		fmt.Fprintln(stderr, "no live vm — waking yours …")
@@ -147,7 +157,7 @@ func ensureVM(a api) (*vmRow, error) {
 // parseSSHArgs returns the args forwarded verbatim to ssh — everything
 // after "--" is passthrough — and swallows the deprecated --keep flag:
 // when it was given, this one place prints its deprecation notice, so
-// every entry path (vm, attach, upload) warns exactly once.
+// every entry path (vm, upload) warns exactly once.
 func parseSSHArgs(stderr io.Writer, args []string) (sshArgs []string) {
 	passthrough := false
 	keep := false

@@ -3,8 +3,8 @@ package main
 // VM ssh invocation module — the one answer to "how does zert run ssh
 // against a vm". Two named entry points share every private policy:
 //
-//   - enterVM: the interactive Entry (`zert vm`, `zert attach`, and the
-//     post-copy entry of `zert <path>`), tmux wrap included;
+//   - enterVM: the interactive Entry (`zert vm` and the post-copy entry of
+//     `zert <path>`), tmux wrap included;
 //   - execInVM: a non-interactive exec with piped stdio (the upload copy
 //     stream, `zert extract`), whose interface cannot express the tmux wrap
 //     or a forced -t — "a piped stream never gets the wrap" is structural.

@@ -98,8 +98,6 @@ func main() {
 		err = cmdLS(os.Args[2:])
 	case "vm":
 		err = cmdVM(os.Args[2:])
-	case "attach":
-		err = cmdAttach(os.Args[2:])
 	case "kill":
 		err = cmdKill(os.Args[2:])
 	case "extract":

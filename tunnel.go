@@ -50,7 +50,7 @@ func wsURL(host, id string) (string, error) {
 var closeCodeMsg = map[websocket.StatusCode]string{
 	4401: errSessionExpired.Error(),
 	4403: "no such vm (or not yours), or it is asleep — connecting to it (zert vm / ssh zert) wakes it",
-	4410: "vm expired — start a new one with `zert vm`",
+	4410: errVMExpired.Error(),
 }
 
 // closeMsg prefers the server's close reason, falling back to the

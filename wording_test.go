@@ -16,3 +16,12 @@ func TestSessionExpiredWording(t *testing.T) {
 		t.Fatalf("session-expired wording = %q, want %q", got, want)
 	}
 }
+
+// The dead-machine truth: the vm is gone and `zert vm` is the way back.
+// One wording, whatever path meets the corpse — today the tunnel's 4410
+// close; the door module's entry paths inherit the same constructor.
+func TestVMExpiredWording(t *testing.T) {
+	if got, want := errVMExpired.Error(), "vm expired — start a new one with `zert vm`"; got != want {
+		t.Fatalf("vm-expired wording = %q, want %q", got, want)
+	}
+}

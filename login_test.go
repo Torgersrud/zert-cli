@@ -384,14 +384,17 @@ func TestLoginInteractiveAccountDisabledKeepsVocabulary(t *testing.T) {
 	}
 }
 
-// TestUsageDocumentsStdinLogin pins the mode's contract where a GUI author
-// reads it: the flag, the two-line stdin format, the never-argv rule and
-// the outcome words all appear in `zert help`.
-func TestUsageDocumentsStdinLogin(t *testing.T) {
+// TestUsageKeepsStdinLoginDiscoverable pins the mode's presence where a
+// GUI author starts: the bare answer names `zert login` and its --stdin
+// flag and points at the README, while the machine-readable contract —
+// the two-line format, the never-argv rule, the outcome words — is
+// behavior-pinned by the stdin suite below and documented in the README
+// the answer names.
+func TestUsageKeepsStdinLoginDiscoverable(t *testing.T) {
 	out := captureStderr(t, usage)
-	for _, want := range []string{"--stdin", "two lines", "never argv", "bad-credentials", "unprovisioned", "rate-limited"} {
+	for _, want := range []string{"zert login", "--stdin", "README"} {
 		if !strings.Contains(out, want) {
-			t.Errorf("usage is the pinned contract: %q missing from it", want)
+			t.Errorf("usage must keep --stdin login discoverable: %q missing from it", want)
 		}
 	}
 }

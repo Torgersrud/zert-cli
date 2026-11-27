@@ -334,6 +334,117 @@ func TestEnsureRejectsMaliciousID(t *testing.T) {
 	}
 }
 
+// TestDoorWhichRowAnswers pins the second ask once: "which row is my
+// machine" — answered with the machine, none, or a typed several-row
+// ambiguity, never an implicit rows-first pick. The answer comes from a
+// listing snapshot the ask takes itself, and it asks the door for
+// nothing: reading is all this ask does. A single row is the machine
+// whatever state word it carries — the unknown-state honesty is the
+// caller's, reporting the row the door named, never "no machine" — and
+// among several rows only the one answerable row (running, asleep, or
+// being made) can be the machine; any other several-row listing is the
+// anomaly, answered typed so no path can read rows[0] past it.
+func TestDoorWhichRowAnswers(t *testing.T) {
+	cases := []struct {
+		name     string
+		live     []string
+		asleep   []string
+		creating []string
+		expired  []string
+		want     doorRowAnswer
+		wantVM   string // "" — the answer names no machine
+	}{
+		{
+			name: "an empty listing answers none",
+			want: doorRowNone,
+		},
+		{
+			name:   "one running row is the machine",
+			live:   []string{"vmlive"},
+			want:   doorRowMachine,
+			wantVM: "vmlive",
+		},
+		{
+			name:   "one sleeping row is the machine",
+			asleep: []string{"vms"},
+			want:   doorRowMachine,
+			wantVM: "vms",
+		},
+		{
+			name:     "one row mid-create is the machine",
+			creating: []string{"vmc"},
+			want:     doorRowMachine,
+			wantVM:   "vmc",
+		},
+		{
+			// the unknown-state honesty starts here: a single row is
+			// the machine even when its state word is one this build
+			// does not know — the caller reports the row's state, so
+			// an expired row is reported as the state it carries,
+			// never as "no machine"
+			name:    "one dead row is still the machine, its state the caller's to report",
+			expired: []string{"vmdead"},
+			want:    doorRowMachine,
+			wantVM:  "vmdead",
+		},
+		{
+			// the anomaly, typed: the one-machine law says the
+			// Customer has one machine, so two rows that both answer
+			// are a server-side anomaly — the answer admits it instead
+			// of naming whichever row sorted first
+			name: "several answerable rows are a typed ambiguity, never rows[0]",
+			live: []string{"vmA", "vmB"},
+			want: doorRowSeveral,
+		},
+		{
+			name:   "a running row and a sleeper are the same typed ambiguity",
+			live:   []string{"vmlive"},
+			asleep: []string{"vms"},
+			want:   doorRowSeveral,
+		},
+		{
+			name:    "the one answerable row among dead ones is the machine",
+			live:    []string{"vmlive"},
+			expired: []string{"vmdead"},
+			want:    doorRowMachine,
+			wantVM:  "vmlive",
+		},
+		{
+			name:    "several rows with nothing answerable are the same anomaly",
+			expired: []string{"vmA", "vmB"},
+			want:    doorRowSeveral,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fs := newFakeServer(t)
+			fs.live = tc.live
+			fs.asleep = tc.asleep
+			fs.creating = tc.creating
+			fs.expired = tc.expired
+
+			which, row, err := askWhichRow(api{host: fs.URL})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if which != tc.want {
+				t.Fatalf("the ask answered %v, want %v", which, tc.want)
+			}
+			if tc.wantVM == "" && row != nil {
+				t.Fatalf("%v names no machine, got the row %s", which, row.SandboxID)
+			}
+			if tc.wantVM != "" && (row == nil || row.SandboxID != tc.wantVM) {
+				t.Fatalf("the ask must name the machine %s, got %v", tc.wantVM, row)
+			}
+			// the which-row ask is a read: it places nothing and
+			// costs no ensure ask
+			if asks, placed := fs.ensureCounts(); asks != 0 || len(placed) != 0 {
+				t.Fatalf("reading the listing places nothing and asks for nothing, got %d asks, placed %v", asks, placed)
+			}
+		})
+	}
+}
+
 // TestEnsureQuota409ShowsList, moved from the vm suite and freed of its
 // global capture: the quota refusal's whole story — the door's message,
 // the Customer's listing and the way forward — renders through the

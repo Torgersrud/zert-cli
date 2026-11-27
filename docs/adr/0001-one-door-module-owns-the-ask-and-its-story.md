@@ -34,7 +34,7 @@ answered with the machine, **none**, or a typed **several-row ambiguity**.
 Behind that interface live the ensure wire ask with its one safe `502`
 retry (refusals are answers, never retried — ensure's idempotency is what
 makes the retry safe, and the retry keeps exactly the shape the wire
-contract allows), the listing pre-check that derives the outcome, the one
+contract allows), the listing snapshot the outcome is derived from, the one
 wording per outcome, the quota story, and every row predicate. The module
 takes an `api` value and never calls `requireLogin`: it is not a command,
 and login and exit policy are the runner's business — the stable name
@@ -46,11 +46,15 @@ no alternative: the 201 body carries no outcome word (`state` is always
 `"running"` by then; the server's audit line knows created, woke or
 returned live — the response does not say). A caller that words the
 outcome must therefore guess from a listing snapshot, and a snapshot
-taken before the ask can be stale. Taking the snapshot, deriving the
-outcome and tolerating the staleness once, behind the interface, is the
-whole point: a listing whose rows are all unanswerable is told as
-creating, matching what the ask then does, and no caller can guess
-differently from another.
+taken before the ask can be stale. The module takes the snapshot anyway
+but never words from it alone: the machine id the ask's own 201 carries
+is compared against the snapshot's rows once the ask has answered — an
+id the snapshot shows answerable was answered as-is, an id it shows
+asleep was woken, an id it does not name (an empty listing among them)
+was placed — so a snapshot that went stale between the listing and the
+ask loses to the ask, and no caller can guess differently from another.
+The one wording is told after the ask, from what the ask did: it cannot
+precede the ask and stay true.
 
 ## Considered options
 

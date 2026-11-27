@@ -9,13 +9,15 @@ package main
 //     ensure, with its one safe retry (a 502 only; refusals are answers,
 //     never retried), the 201-running guard and the invalid-id guard;
 //   - the outcome: answered as-is, woken or placed — typed here, derived
-//     from the listing snapshot the module takes itself before the ask,
-//     never guessed from a listing by the caller; a listing whose rows
-//     are all unanswerable is told as creating, matching what the ask
-//     then does;
+//     by comparing the machine id the ask itself answers against the
+//     listing snapshot the module takes before it, never guessed from a
+//     listing by the caller; an id no row names — or an empty listing —
+//     is a placed outcome, so a snapshot that disagrees with the ask
+//     still hears the story the ask did;
 //   - the story: one wording per outcome, told to the writer the caller
-//     hands over before the ask explains its wait — the caller decides
-//     whether and where to render, and the stable name renders nothing;
+//     hands over once the ask has answered, from what the ask did — the
+//     caller decides whether and where to render, and the stable name
+//     renders nothing;
 //   - the quota story: the 409 refusal's listing and hint render through
 //     the caller's writer, and the refusal comes back as an ordinary
 //     error — the module prints to no global and owns no exit policy;
@@ -41,7 +43,8 @@ import (
 // doorOutcome is which of the three things the ensure ask did — the
 // answer the interface reports alongside the machine. The 201 body never
 // carries an outcome word (state is always "running" by then), so the
-// module derives it from the snapshot it took before the ask.
+// module derives it by comparing the machine id the ask answered against
+// the snapshot it took before the ask: the id is the ask's own truth.
 type doorOutcome int
 
 const (
@@ -84,59 +87,54 @@ func (o doorOutcome) story() string {
 	return ""
 }
 
-// hasLiveVM reports whether any listed row is a machine already running.
-func hasLiveVM(rows []vmRow) bool {
-	for _, r := range rows {
-		if r.Live {
-			return true
-		}
-	}
-	return false
-}
-
-// hasAsleepVM reports whether any listed row is a sleeper.
-func hasAsleepVM(rows []vmRow) bool {
-	for _, r := range rows {
-		if r.Asleep {
-			return true
-		}
-	}
-	return false
-}
-
 // askMachine is the door's first ask: "give me my machine" — one ensure
 // ask, answered with the machine plus which of the three outcomes
-// happened. The outcome is derived from a listing snapshot taken inside
-// this ask, before the POST: the response carries no outcome word, and
-// the caller never guesses from a listing — the snapshot, the derivation
-// and the wording are the door's. stderr is the caller's writer: the
-// story is told there before the ask (the wait it explains is the
-// door's), and the quota refusal's listing and hint land there on a 409;
-// a caller that renders nothing — the stable name — passes io.Discard.
+// happened. The module takes the listing snapshot itself, before the
+// POST, but the wording never comes from the snapshot alone: the machine
+// id the ask's own 201 carries is compared against the snapshot's rows
+// once the ask has answered, so a snapshot that went stale between the
+// listing and the ask still hears the story the ask did. The derivation
+// and the wording are the door's; the caller never guesses from a
+// listing. stderr is the caller's writer: the story is told there once
+// the ask has answered, and the quota refusal's listing and hint land
+// there on a 409; a caller that renders nothing — the stable name —
+// passes io.Discard.
 func askMachine(a api, stderr io.Writer) (*vmRow, doorOutcome, error) {
 	rows, err := listVMs(a)
 	if err != nil {
 		return nil, 0, err
 	}
-	var outcome doorOutcome
-	switch {
-	case hasLiveVM(rows):
-		outcome = doorAnswered
-	case hasAsleepVM(rows):
-		outcome = doorWoken
-	default:
-		// rows that are neither running nor asleep — none at all,
-		// expired, or a state word this build has never seen — are dead
-		// rows: they answer nothing, and the ask places a machine, so
-		// the story says creating
-		outcome = doorPlaced
-	}
-	fmt.Fprintln(stderr, outcome.story())
 	vm, err := ensureVM(a, stderr)
 	if err != nil {
 		return nil, 0, err
 	}
+	outcome := askOutcome(rows, vm.SandboxID)
+	fmt.Fprintln(stderr, outcome.story())
 	return vm, outcome, nil
+}
+
+// askOutcome derives which of the three things the ask did from the
+// machine id the ask itself answered, compared against the snapshot's
+// rows: a row the snapshot shows answerable under that id means the
+// machine was already there (answered as-is), a row it shows asleep
+// means it was woken, and an id no row names — or an empty listing —
+// means one was placed. The snapshot can be stale; the id cannot, so the
+// story follows the id.
+func askOutcome(rows []vmRow, id string) doorOutcome {
+	for _, r := range rows {
+		if r.SandboxID != id {
+			continue
+		}
+		switch {
+		case r.Asleep:
+			return doorWoken
+		case answerableRow(r):
+			return doorAnswered
+		}
+		// a dead row under the ask's id answers nothing: the ask placed
+		// past it, so the story says creating
+	}
+	return doorPlaced
 }
 
 // askWhichRow is the door's second ask: "which row is my machine" —
@@ -220,7 +218,7 @@ func (r doorRowAnswer) String() string {
 // is, an Asleep one is woken, and only a Customer with nothing gets one
 // placed. The response says what the machine is, never which of the
 // three happened — the outcome story is askMachine's, derived from the
-// snapshot it took.
+// id this ask answered against the snapshot it took.
 func ensureVM(a api, stderr io.Writer) (*vmRow, error) {
 	resp, data, err := a.do("POST", "/v1/vm", map[string]any{})
 	if err != nil {

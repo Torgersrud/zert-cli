@@ -44,10 +44,12 @@ module retired
 answered with the machine plus which of the three outcomes happened —
 **answered as-is** (a running machine handed back), **woken** (an Asleep
 one woken), **placed** (nothing answerable, so one placed). The 201
-response carries no outcome word, so the module derives the answer from
-the listing snapshot it takes itself before the ask — never a caller's
-guess; dead rows answer nothing, so a listing of them is told creating,
-matching what the ask then does.
+response carries no outcome word, so the module derives the answer by
+comparing the machine id the ask itself answered against the listing
+snapshot it takes before the ask — never a caller's guess, and never the
+snapshot's alone: a snapshot that went stale loses to the ask. Dead rows
+answer nothing, so an id no answerable row names is told creating,
+matching what the ask then did.
 _Avoid_: found / waking / creating spelled by a caller from a listing —
 one wording per outcome, derived once inside the module
 

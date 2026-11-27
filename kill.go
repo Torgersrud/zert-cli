@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -35,7 +36,9 @@ func killIDs(a api, stderr io.Writer, ids []string) error {
 }
 
 // cmdKill ends machines: bare (no args) and `all` both take down every
-// vm the listing answers, explicit ids take down those alone.
+// vm the listing answers, explicit ids take down those alone. An
+// empty-string argument is not an id — `zert kill ""` is the usage
+// error, never the id guard's wording.
 func cmdKill(args []string) error {
 	if len(args) == 0 || killAll(args) {
 		_, a := requireLogin()
@@ -52,6 +55,9 @@ func cmdKill(args []string) error {
 			ids = append(ids, r.SandboxID)
 		}
 		return killIDs(a, os.Stderr, ids)
+	}
+	if args[0] == "" {
+		return errors.New("usage: zert kill <id>..")
 	}
 	for _, id := range args {
 		if !validSandboxID(id) {

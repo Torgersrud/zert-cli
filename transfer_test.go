@@ -42,8 +42,8 @@ func runTransferFromVM(t *testing.T, stdoutPath, exit string, codec func(io.Read
 		t.Setenv("FAKE_SSH_EXIT", exit)
 	}
 	return transferFromVM(
-		&Credentials{Host: "transfer.test", Token: testToken},
-		&vmRow{SandboxID: "vmlive", Live: true},
+		vmLink{creds: &Credentials{Host: "transfer.test", Token: testToken},
+			vm: &vmRow{SandboxID: "vmlive", Live: true}},
 		"tar -czf - -C ~ -- 'out'",
 		os.Stderr,
 		codec,
@@ -63,8 +63,8 @@ func runTransferToVM(t *testing.T, stream, exit string, pack func(io.Writer) err
 		t.Setenv("FAKE_SSH_EXIT", exit)
 	}
 	return transferToVM(
-		&Credentials{Host: "transfer.test", Token: testToken},
-		&vmRow{SandboxID: "vmlive", Live: true},
+		vmLink{creds: &Credentials{Host: "transfer.test", Token: testToken},
+			vm: &vmRow{SandboxID: "vmlive", Live: true}},
 		"tar -xzf - -C ~",
 		io.Discard,
 		os.Stderr,
@@ -157,8 +157,8 @@ func TestTransferFromVMSpawnFailureReleasesTheCodec(t *testing.T) {
 	t.Cleanup(func() { sshPath = "ssh" })
 
 	_, err := transferFromVM(
-		&Credentials{Host: "transfer.test", Token: testToken},
-		&vmRow{SandboxID: "vmlive", Live: true},
+		vmLink{creds: &Credentials{Host: "transfer.test", Token: testToken},
+			vm: &vmRow{SandboxID: "vmlive", Live: true}},
 		"tar -czf - -C ~ -- 'out'",
 		os.Stderr,
 		func(r io.Reader) error { _, _ = io.ReadAll(r); return nil },
@@ -263,8 +263,8 @@ func TestTransferToVMSpawnFailureReleasesTheCodec(t *testing.T) {
 	t.Cleanup(func() { sshPath = "ssh" })
 
 	_, err := transferToVM(
-		&Credentials{Host: "transfer.test", Token: testToken},
-		&vmRow{SandboxID: "vmlive", Live: true},
+		vmLink{creds: &Credentials{Host: "transfer.test", Token: testToken},
+			vm: &vmRow{SandboxID: "vmlive", Live: true}},
 		"tar -xzf - -C ~",
 		io.Discard,
 		os.Stderr,

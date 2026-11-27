@@ -164,22 +164,32 @@ func vmUserDest(vmID string) string {
 	return "user@" + vmID
 }
 
+// vmLink is the machine one ssh invocation dials together with the
+// credentials its tunnel child needs — the pair every vm ssh path
+// travels with, bundled so the invocation and transfer seams carry the
+// dial facts as one value instead of a clump of arguments. Naming the
+// machine stays the caller's: a link is handed over already resolved.
+type vmLink struct {
+	creds *Credentials
+	vm    *vmRow
+}
+
 // vmSSHCommand assembles what every ssh invocation against a vm shares: the
 // base options — the self-exec ProxyCommand dialling this vm through the
 // tunnel, accept-new host keys, the keepalive pair — the child's stdio, and
 // the session token in the child's environment, never its argv. Callers
 // append the destination and any remote command(s) in their path's order.
-func vmSSHCommand(creds *Credentials, vm *vmRow, stdin io.Reader, stdout, stderr io.Writer) *exec.Cmd {
+func vmSSHCommand(link vmLink, stdin io.Reader, stdout, stderr io.Writer) *exec.Cmd {
 	sshCmd := exec.Command(sshPath)
 	sshCmd.Args = append(sshCmd.Args,
-		"-o", proxyCommand(selfExe(), vm.SandboxID),
+		"-o", proxyCommand(selfExe(), link.vm.SandboxID),
 		"-o", "StrictHostKeyChecking=accept-new",
 		"-o", "ServerAliveInterval=30",
 		"-o", "ServerAliveCountMax=4",
 	)
 	sshCmd.Stdin, sshCmd.Stdout, sshCmd.Stderr = stdin, stdout, stderr
 	// the tunnel child gets the token via environment, never argv
-	sshCmd.Env = childEnv(os.Environ(), creds.Token, creds.Host)
+	sshCmd.Env = childEnv(os.Environ(), link.creds.Token, link.creds.Host)
 	return sshCmd
 }
 
@@ -235,19 +245,19 @@ func runWithSignalForwarding(sshCmd *exec.Cmd) error {
 // -t, exactly the plain ssh of before the wrap existed. The wrap decision
 // consumes the scanner's answer — scan.remoteCmd is where the one walk
 // judged the user's command to start, so no second walk happens here.
-func enterVM(creds *Credentials, vm *vmRow, scan sshScan, stdin io.Reader, stdout, stderr io.Writer) error {
+func enterVM(link vmLink, scan sshScan, stdin io.Reader, stdout, stderr io.Writer) error {
 	// the wrap is the remote command only for an interactive entry without
 	// a remote command of the user's own — their args then reach ssh
 	// verbatim, unwrapped, exactly as before tmux
 	wrapped := stdinIsInteractive() && !scan.remoteCmd
-	sshCmd := vmSSHCommand(creds, vm, stdin, stdout, stderr)
+	sshCmd := vmSSHCommand(link, stdin, stdout, stderr)
 	if wrapped {
 		// ssh only gives an explicit remote command a tty on request,
 		// and tmux needs one
 		sshCmd.Args = append(sshCmd.Args, "-t")
 	}
 	sshCmd.Args = append(sshCmd.Args, scan.args...)
-	sshCmd.Args = append(sshCmd.Args, vmUserDest(vm.SandboxID))
+	sshCmd.Args = append(sshCmd.Args, vmUserDest(link.vm.SandboxID))
 	if wrapped {
 		sshCmd.Args = append(sshCmd.Args, TmuxWrapCmd)
 	}
@@ -266,8 +276,8 @@ func enterVM(creds *Credentials, vm *vmRow, scan sshScan, stdin io.Reader, stdou
 // ssh's exit code). Like the interactive Entry, a signal that reaches zert
 // is forwarded to the ssh child, so a Ctrl-C during a long copy or extract
 // stops that child instead of leaving its fate to chance.
-func execInVM(creds *Credentials, vm *vmRow, remoteCmd string, stdin io.Reader, stdout, stderr io.Writer) error {
-	sshCmd := vmSSHCommand(creds, vm, stdin, stdout, stderr)
-	sshCmd.Args = append(sshCmd.Args, vmUserDest(vm.SandboxID), remoteCmd)
+func execInVM(link vmLink, remoteCmd string, stdin io.Reader, stdout, stderr io.Writer) error {
+	sshCmd := vmSSHCommand(link, stdin, stdout, stderr)
+	sshCmd.Args = append(sshCmd.Args, vmUserDest(link.vm.SandboxID), remoteCmd)
 	return runWithSignalForwarding(sshCmd)
 }

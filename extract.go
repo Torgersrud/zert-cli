@@ -183,7 +183,7 @@ func extractRun(vmPathArg, dest string, stderr io.Writer) error {
 	// transfer module
 	var files int
 	var raw int64
-	compressed, err := transferFromVM(creds, vm, extractRemoteCmd(dir, base), stderr,
+	compressed, err := transferFromVM(vmLink{creds: creds, vm: vm}, extractRemoteCmd(dir, base), stderr,
 		func(r io.Reader) error {
 			f, n, tarErr := extractTarGz(absDest, r)
 			files, raw = f, n

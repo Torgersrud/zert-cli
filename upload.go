@@ -235,7 +235,7 @@ func uploadRun(arg string, sshArgs []string, stdin io.Reader, stdout, stderr io.
 	// wording — the pipe, the counting, the spawn-failure release and the
 	// failure precedence belong to the transfer module
 	var raw int64
-	packed, err := transferToVM(creds, vm, uploadRemoteCmd, stdout, stderr,
+	packed, err := transferToVM(vmLink{creds: creds, vm: vm}, uploadRemoteCmd, stdout, stderr,
 		func(w io.Writer) error {
 			r, packErr := packTar(w, src, base)
 			raw = r
@@ -253,7 +253,7 @@ func uploadRun(arg string, sshArgs []string, stdin io.Reader, stdout, stderr io.
 	// ends a vm — and --keep no longer decides anything either.
 	if created || len(scan.args) > 0 {
 		fmt.Fprintf(stderr, "entering vm %s …\n", vm.SandboxID)
-		return enterVM(creds, vm, scan, stdin, stdout, stderr)
+		return enterVM(vmLink{creds: creds, vm: vm}, scan, stdin, stdout, stderr)
 	}
 	return nil
 }

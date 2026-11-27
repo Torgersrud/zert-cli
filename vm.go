@@ -87,7 +87,7 @@ func vmRun(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	fmt.Fprintf(stderr, "vm %s ready (expires in %s)\n", vm.SandboxID,
 		time.Until(time.Unix(int64(vm.ExpiresAt), 0)).Round(time.Second))
 
-	return enterVM(creds, vm, scan, stdin, stdout, stderr)
+	return enterVM(vmLink{creds: creds, vm: vm}, scan, stdin, stdout, stderr)
 }
 
 func cmdVM(args []string) error {

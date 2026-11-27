@@ -14,7 +14,9 @@ _Avoid_: ssh in, reconnect, login (the act is entering, not authenticating)
 **Attach**:
 As the product defines it (see `~/dev/GLOSSARY.md`): opening a connection to
 a running VM — the customer's word for an entry into a VM that already
-exists.
+exists. Under the sleep model the machine need not be running: the escape
+hatch's raw id resolves through the ensure ask before the relay opens, so a
+sleeping machine is woken rather than reported expired.
 _Avoid_: reconnect, re- coinages for the act
 
 **Ensure**:

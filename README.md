@@ -33,7 +33,8 @@ Prebuilt binaries for every platform are on the
 ```sh
 zert login
 zert vm                         # create a VM and ssh into it (leaving never kills it)
-zert attach                     # back into a running VM (same shell, id optional)
+zert attach                     # back into your VM (same shell, id optional;
+                                 # a sleeping one wakes)
 zert ./myproject                # run a zert vm with your repo
 zert extract ~/report.pdf       # copy a file/dir out of your live vm
 zert status                     # your machine in plain words: running with
@@ -57,13 +58,15 @@ none says that and points at `zert vm`. A state this version of the CLI
 has never seen is admitted, not guessed at. Raw ids appear in `zert ls`
 and nowhere else on the customer-facing surface.
 
-`zert attach [id]` is how you come back to a VM that is still running: with
-exactly one live VM the id is optional, with several you have to name one
-(`zert ls` lists them), and with none it points you at `zert vm`. An attach
-to a VM whose Idle window has run out says so instead of hanging:
-"vm <id> expired — start a new one with `zert vm`". Leaving an attached
-session never kills the VM either — only `zert kill` ends it: an idle
-machine falls asleep, and your next connect wakes it.
+`zert attach [id]` is how you come back to your VM: with exactly one
+machine (running or asleep) the id is optional, with several you have to
+name one (`zert ls` lists them), and with none it points you at `zert vm`.
+A machine that fell asleep wakes when you attach — a few seconds' pause,
+then the same shell, with everything as you left it. An attach to an id
+that is gone or not yours says so: "no such vm <id> — zert ls lists
+your vms". Leaving an attached session never kills the VM either — only
+`zert kill` ends it: an idle machine falls asleep, and your next connect
+wakes it.
 
 Every interactive entry (`zert vm`, `zert attach`, and the entry after a
 copy) runs inside one tmux session in the VM, named `zert`. That is what

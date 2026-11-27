@@ -371,17 +371,24 @@ func tempDirNamed(t *testing.T, name string) string {
 }
 
 // captureStdout runs fn with os.Stdout redirected to a pipe and returns what
-// was written — the reading half of the status/ls rendering tests, whose
-// commands hardwire os.Stdout the way me does.
+// was written — the reading half for every command that hardwires os.Stdout:
+// the status/ls renderings, and the machine-readable stream a GUI reads off
+// the hidden engine.
 func captureStdout(t *testing.T, fn func()) string {
 	t.Helper()
 	old := os.Stdout
-	r, w, _ := os.Pipe()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
 	os.Stdout = w
 	fn()
 	w.Close()
 	os.Stdout = old
-	b, _ := io.ReadAll(r)
+	b, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal(err)
+	}
 	return string(b)
 }
 

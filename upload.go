@@ -245,10 +245,9 @@ func uploadRun(arg string, sshArgs []string, stdin io.Reader, stdout, stderr io.
 	created := false
 	if vm == nil {
 		// the same pre-check as the vm command, on the listing already in
-		// hand: rows without a live machine mean an Asleep one in the
-		// sleep model, so ensure wakes the Customer's machine — only a
-		// customer with nothing gets one placed
-		if len(rows) > 0 {
+		// hand: an Asleep row means the ask wakes the Customer's machine —
+		// only dead rows, or none at all, mean one is placed
+		if hasAsleepVM(rows) {
 			fmt.Fprintln(stderr, "no live vm — waking yours …")
 		} else {
 			fmt.Fprintln(stderr, "no live vm — creating one …")

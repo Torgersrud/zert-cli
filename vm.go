@@ -59,6 +59,20 @@ func findLocalPubkey() (string, error) {
 	return "", errors.New("no ssh key found: run `ssh-keygen -t ed25519` first")
 }
 
+// hasAnswerableVM reports whether the listing carries a machine the door's
+// ensure ask answers as the Customer's own — one that is running or
+// asleep. Rows that are neither (expired, or a state word this build has
+// never seen) are dead rows: they answer nothing, and the ask places a
+// machine instead.
+func hasAnswerableVM(rows []vmRow) bool {
+	for _, r := range rows {
+		if r.Live || r.Asleep {
+			return true
+		}
+	}
+	return false
+}
+
 // ensureVM asks the door for the Customer's one machine — POST /v1/vm is the
 // ensure call ("give me my machine"): a live machine is answered as it is, an
 // Asleep one is woken, and only a Customer with nothing gets one placed. The
@@ -161,13 +175,15 @@ func vmRun(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	}
 
 	// The ensure response carries no outcome word, so the listing decides
-	// what the command tells the Customer: rows on the account mean the ask
-	// will answer a machine that is already theirs — found, not created.
+	// what the command tells the Customer: a row the door can answer —
+	// running or asleep — means the ask hands over a machine that is
+	// already theirs, found, not created. Dead rows answer nothing, so the
+	// ask places one and the wording says so.
 	rows, err := listVMs(a)
 	if err != nil {
 		return err
 	}
-	if len(rows) > 0 {
+	if hasAnswerableVM(rows) {
 		fmt.Fprintln(stderr, "found your vm — entering it")
 	} else {
 		fmt.Fprintln(stderr, "creating vm …")

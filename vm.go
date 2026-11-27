@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -73,16 +72,6 @@ func hasAnswerableVM(rows []vmRow) bool {
 	return false
 }
 
-// hasAsleepVM reports whether any listed row is a sleeper.
-func hasAsleepVM(rows []vmRow) bool {
-	for _, r := range rows {
-		if r.Asleep {
-			return true
-		}
-	}
-	return false
-}
-
 // wakeOrCreate announces the ensure ask a customer without a live machine
 // makes, and makes it: the machine is theirs and asleep — woken — or
 // nothing answerable is listed and one is placed. The wording lives here
@@ -94,64 +83,6 @@ func wakeOrCreate(a api, rows []vmRow, stderr io.Writer) (*vmRow, error) {
 		fmt.Fprintln(stderr, "no live vm — creating one …")
 	}
 	return ensureVM(a)
-}
-
-// ensureVM asks the door for the Customer's one machine — POST /v1/vm is the
-// ensure call ("give me my machine"): a live machine is answered as it is, an
-// Asleep one is woken, and only a Customer with nothing gets one placed. The
-// response says what the machine is, never which of the three happened, so a
-// caller that needs to tell the Customer that learns it from a listing before
-// the ask.
-func ensureVM(a api) (*vmRow, error) {
-	resp, data, err := a.do("POST", "/v1/vm", map[string]any{})
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode == http.StatusBadGateway {
-		// one automatic retry, and a safe one now: the route is
-		// idempotent ensure, so a 502 that actually reached the door
-		// answered the Customer's machine, and asking again returns
-		// that machine instead of placing a second one.
-		resp, data, err = a.do("POST", "/v1/vm", map[string]any{})
-		if err != nil {
-			return nil, err
-		}
-	}
-	switch resp.StatusCode {
-	case http.StatusCreated:
-	case http.StatusConflict:
-		fmt.Fprintln(os.Stderr, detail(data))
-		fmt.Fprintln(os.Stderr, "your VMs:")
-		if rows, err := listVMs(a); err == nil {
-			printVMs(rows)
-		}
-		// attach is gone: the way forward is the listing that names the
-		// machines and kill's freed slot — never a command that no longer
-		// exists
-		fmt.Fprintln(os.Stderr, "hint: zert ls lists your vms; "+
-			"zert kill <id> (or zert kill all) frees a slot")
-		return nil, &exitError{1, errors.New("quota reached")}
-	default:
-		return nil, mapped(resp, data)
-	}
-	var out struct {
-		SandboxID string  `json:"sandbox_id"`
-		ExpiresAt float64 `json:"expires_at"`
-		State     string  `json:"state"`
-	}
-	if err := json.Unmarshal(data, &out); err != nil || out.SandboxID == "" {
-		return nil, errors.New("malformed ensure response")
-	}
-	if !validSandboxID(out.SandboxID) {
-		return nil, errors.New("malformed server response: invalid vm id")
-	}
-	// every 201 outcome — created, woken or returned live — hands over a
-	// running machine, so anything else is a door that did not keep the
-	// contract, and the CLI refuses to enter it
-	if out.State != "running" {
-		return nil, errors.New("malformed ensure response: vm not running")
-	}
-	return &vmRow{SandboxID: out.SandboxID, ExpiresAt: out.ExpiresAt, Live: true}, nil
 }
 
 // parseSSHArgs returns the args forwarded verbatim to ssh — everything

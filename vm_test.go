@@ -270,6 +270,130 @@ func TestEnsureTwiceAnswersSameMachine(t *testing.T) {
 	}
 }
 
+// TestEnsure502RetryPlacesOneMachine routes the ticket's headline through
+// the retry itself: an ask that dies on the door's far side (502) places
+// nothing, the retry places the one machine, and a later ask answers that
+// same machine without placing anything — the retried bad-gateway answer
+// returns the Customer's one machine, never a second.
+func TestEnsure502RetryPlacesOneMachine(t *testing.T) {
+	fs := newFakeServer(t)
+	setupHome(t, fs.URL)
+	logPath := fakeSSH(t)
+	fs.create = func(w http.ResponseWriter, tries int) {
+		fs.mu.Lock()
+		placed := len(fs.placed) > 0
+		fs.mu.Unlock()
+		if !placed {
+			if tries == 1 {
+				// the ask reached the door and died past it: the
+				// bootstrap failed, so nothing was placed
+				http.Error(w, `{"detail":"failed to bootstrap VM, try again"}`, 502)
+				return
+			}
+			fs.mu.Lock()
+			fs.placed = append(fs.placed, "vm123")
+			fs.mu.Unlock()
+		}
+		w.WriteHeader(201)
+		json.NewEncoder(w).Encode(map[string]any{
+			"sandbox_id": "vm123", "expires_at": json.Number("9999999999"),
+			"state": "running",
+		})
+	}
+
+	if err := vmRun(nil, strings.NewReader(""), os.Stdout, io.Discard); err != nil {
+		t.Fatalf("502 retry should succeed, got %v", err)
+	}
+	if err := vmRun(nil, strings.NewReader(""), os.Stdout, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	fs.mu.Lock()
+	placed := append([]string(nil), fs.placed...)
+	asks := fs.ensureAsks
+	fs.mu.Unlock()
+	if len(placed) != 1 || placed[0] != "vm123" {
+		t.Fatalf("retry places the one machine, later asks place nothing: %v", placed)
+	}
+	if asks != 3 {
+		t.Fatalf("want 3 asks (502, retry, later ask), got %d", asks)
+	}
+	assertSSHCommonOptions(t, readLog(t, logPath), "vm123")
+}
+
+// TestEnsureRefusalNotRetried pins that a refusal is final: the ensure
+// refusals (400 no/invalid pubkey, 429 rate-limited, 503 wake/arm failed)
+// place nothing and are never retried — only the bad gateway asks again.
+func TestEnsureRefusalNotRetried(t *testing.T) {
+	for _, code := range []int{400, 429, 503} {
+		fs := newFakeServer(t)
+		setupHome(t, fs.URL)
+		logPath := fakeSSH(t)
+		fs.create = func(w http.ResponseWriter, _ int) {
+			http.Error(w, `{"detail":"refused"}`, code)
+		}
+
+		err := vmRun(nil, strings.NewReader(""), os.Stdout, io.Discard)
+		if err == nil {
+			t.Fatalf("%d: want the refusal as an error", code)
+		}
+		fs.mu.Lock()
+		asks, placed := fs.ensureAsks, append([]string(nil), fs.placed...)
+		fs.mu.Unlock()
+		if asks != 1 {
+			t.Fatalf("%d: a refusal must not be retried, got %d asks", code, asks)
+		}
+		if len(placed) != 0 {
+			t.Fatalf("%d: a refusal places nothing, got %v", code, placed)
+		}
+		assertNoSSHSpawned(t, logPath, "a refused ensure")
+	}
+}
+
+// TestEnsure502RetriedOnceOnly pins the retry's shape: the 502 keeps its
+// trigger and its single attempt — a door that answers 502 twice gets two
+// asks, never a third.
+func TestEnsure502RetriedOnceOnly(t *testing.T) {
+	fs := newFakeServer(t)
+	setupHome(t, fs.URL)
+	fs.create = func(w http.ResponseWriter, _ int) {
+		http.Error(w, `{"detail":"failed to bootstrap VM, try again"}`, 502)
+	}
+
+	err := vmRun(nil, strings.NewReader(""), os.Stdout, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "bootstrap") {
+		t.Fatalf("want the 502 word after one retry, got %v", err)
+	}
+	fs.mu.Lock()
+	asks := fs.ensureAsks
+	fs.mu.Unlock()
+	if asks != 2 {
+		t.Fatalf("the retry is one attempt: want 2 asks, got %d", asks)
+	}
+}
+
+// TestEnsureRequiresRunningState pins the response contract's one promise
+// about the machine: every 201 hands over a running machine, whatever
+// outcome got it there. A door that answers any other state word is not
+// obeying the ensure contract, and the CLI refuses to enter what it said.
+func TestEnsureRequiresRunningState(t *testing.T) {
+	fs := newFakeServer(t)
+	setupHome(t, fs.URL)
+	logPath := fakeSSH(t)
+	fs.create = func(w http.ResponseWriter, _ int) {
+		w.WriteHeader(201)
+		json.NewEncoder(w).Encode(map[string]any{
+			"sandbox_id": "vm123", "expires_at": json.Number("9999999999"),
+			"state": "asleep",
+		})
+	}
+
+	err := vmRun(nil, strings.NewReader(""), os.Stdout, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "not running") {
+		t.Fatalf("want a not-running refusal, got %v", err)
+	}
+	assertNoSSHSpawned(t, logPath, "a machine not handed over running")
+}
+
 func TestEnsureRejectsMaliciousID(t *testing.T) {
 	fs := newFakeServer(t)
 	fs.create = func(w http.ResponseWriter, _ int) {
@@ -332,6 +456,13 @@ func TestVMQuota409ShowsList(t *testing.T) {
 	}
 	if !strings.Contains(hint, "attaches to a live vm") {
 		t.Fatalf("quota-409 hint must say attach attaches to a live vm, got %q", hint)
+	}
+	// the 409 backstop is a refusal: one ask, no retry
+	fs.mu.Lock()
+	asks := fs.ensureAsks
+	fs.mu.Unlock()
+	if asks != 1 {
+		t.Fatalf("a 409 refusal must not be retried, got %d asks", asks)
 	}
 }
 

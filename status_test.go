@@ -102,6 +102,61 @@ func TestStatusUnknownStateWordDoesNotCrashOrLie(t *testing.T) {
 	}
 }
 
+// TestStatusSeveralRowsAdmitsUnusual pins that status never pretends a
+// several-row listing is one machine by reading rows[0]: under the
+// one-machine law that listing is a server-side anomaly, so the answer
+// says so and points at the technical listing instead of naming whatever
+// state the first row happens to carry.
+func TestStatusSeveralRowsAdmitsUnusual(t *testing.T) {
+	fs := newFakeServer(t)
+	setupHome(t, fs.URL)
+	fs.mu.Lock()
+	fs.live = []string{"vm1", "vm2"}
+	fs.mu.Unlock()
+
+	out := captureStdout(t, func() {
+		if err := cmdStatus(nil); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if !strings.Contains(out, "unusual") {
+		t.Fatalf("a several-row listing must be called unusual, got %q", out)
+	}
+	if !strings.Contains(out, "zert ls") {
+		t.Fatalf("an unusual listing must point at zert ls, got %q", out)
+	}
+	if strings.Contains(out, "running") || strings.Contains(out, "asleep") {
+		t.Fatalf("status must not name a state read off one arbitrary row, got %q", out)
+	}
+	if strings.Contains(out, "vm1") || strings.Contains(out, "vm2") {
+		t.Fatalf("raw ids have no place on the customer surface, got %q", out)
+	}
+}
+
+// TestStatusOneMeaningfulRowAmongDead pins the anomaly's one honest read:
+// when several rows carry exactly one machine the door can answer —
+// running, asleep, or being made — that row is the machine status reports.
+func TestStatusOneMeaningfulRowAmongDead(t *testing.T) {
+	fs := newFakeServer(t)
+	setupHome(t, fs.URL)
+	fs.mu.Lock()
+	fs.live = []string{"vmlive"}
+	fs.expired = []string{"vmdead"}
+	fs.mu.Unlock()
+
+	out := captureStdout(t, func() {
+		if err := cmdStatus(nil); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if !strings.Contains(out, "running") || !timeLeftRE.MatchString(out) {
+		t.Fatalf("the one answerable row is the machine, got %q", out)
+	}
+	if strings.Contains(out, "vmdead") {
+		t.Fatalf("raw ids have no place on the customer surface, got %q", out)
+	}
+}
+
 func TestUsageNamesStatusAndStateWords(t *testing.T) {
 	out := captureStderr(t, usage)
 	if !strings.Contains(out, "zert status") {

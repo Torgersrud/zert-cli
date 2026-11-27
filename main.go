@@ -59,7 +59,8 @@ usage:
                                  running it is required, with none it
                                  says so); leaving this session never
                                  kills the VM either
-  zert kill <id>..|all           terminate VM(s)
+  zert kill [<id>..|all]         terminate VM(s) — bare kill ends every
+                                 vm the listing answers, same as all
   zert extract <vm-path> [dir]   copy a file/dir from your live vm
                                  into [dir] (default: current dir); vm
                                  paths resolve against the vm user's home

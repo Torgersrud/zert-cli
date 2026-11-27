@@ -41,6 +41,7 @@ zert status                     # your machine in plain words: running with
                                  # its time left, asleep, or none yet
 zert ls                         # the technical listing: raw ids with state
                                  # words and time left
+zert kill                      # terminate your VM(s) — same as kill all
 zert kill <id>                  # terminate a VM
 zert kill all                   # terminate all your VMs
 zert --version

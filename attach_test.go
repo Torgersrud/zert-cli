@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
+	"net/http"
 	"os"
 	"strings"
 	"testing"
@@ -41,7 +43,120 @@ func TestAttachExpiredVMExplainsItself(t *testing.T) {
 	if !strings.Contains(err.Error(), "start a new one") {
 		t.Fatalf("the expiry error must say to start a new one, got %v", err)
 	}
+	fs.mu.Lock()
+	asks, placed := fs.ensureAsks, append([]string(nil), fs.placed...)
+	fs.mu.Unlock()
+	if asks != 0 || len(placed) != 0 {
+		t.Fatalf("a row the door cannot hand over costs no ask and places nothing, got %d asks, placed %v", asks, placed)
+	}
 	assertNoSSHSpawned(t, logPath, "an expired vm")
+}
+
+// TestAttachByIDGoneSleeperRefusedByAnswer pins the refusal shape for a
+// named sleeper that was genuinely gone: the ensure ask settles its row and
+// places the fresh machine that ends the story, and the attach answers with
+// the house not-found wording rather than entering the machine the Customer
+// did not name.
+func TestAttachByIDGoneSleeperRefusedByAnswer(t *testing.T) {
+	fs := newFakeServer(t)
+	fs.asleep = []string{"vmzombie"}
+	fs.create = func(w http.ResponseWriter, _ int) {
+		w.WriteHeader(201)
+		json.NewEncoder(w).Encode(map[string]any{
+			"sandbox_id": "vmfresh", "expires_at": json.Number("9999999999"),
+			"state": "running",
+		})
+	}
+	setupHome(t, fs.URL)
+	logPath := fakeSSH(t)
+
+	err := attachRun([]string{"vmzombie"}, strings.NewReader(""), os.Stdout, os.Stderr)
+	if err == nil || !strings.Contains(err.Error(), "no such vm vmzombie") {
+		t.Fatalf("want the not-found wording for a gone sleeper, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "zert ls") {
+		t.Fatalf("the refusal must point at zert ls, got %v", err)
+	}
+	fs.mu.Lock()
+	asks := fs.ensureAsks
+	fs.mu.Unlock()
+	if asks != 1 {
+		t.Fatalf("the gone sleeper costs exactly one ask, got %d", asks)
+	}
+	assertNoSSHSpawned(t, logPath, "a machine the ask did not answer with the named id")
+}
+
+// TestAttachByIDGoneKeepsRefusal pins the gone branch: an id that is not one
+// of the Customer's machines — settled gone, or never theirs — keeps the
+// house not-found wording and costs no ensure ask, so nothing is ever placed
+// for an id the Customer could not have meant.
+func TestAttachByIDGoneKeepsRefusal(t *testing.T) {
+	fs := newFakeServer(t)
+	fs.live = []string{"vma"}
+	setupHome(t, fs.URL)
+	logPath := fakeSSH(t)
+
+	err := attachRun([]string{"vmgone"}, strings.NewReader(""), os.Stdout, os.Stderr)
+	if err == nil || !strings.Contains(err.Error(), "no such vm vmgone") {
+		t.Fatalf("want the not-found wording kept, got %v", err)
+	}
+	fs.mu.Lock()
+	asks, placed := fs.ensureAsks, append([]string(nil), fs.placed...)
+	fs.mu.Unlock()
+	if asks != 0 || len(placed) != 0 {
+		t.Fatalf("a gone id must cost no ask and place nothing, got %d asks, placed %v", asks, placed)
+	}
+	assertNoSSHSpawned(t, logPath, "a gone id")
+}
+
+// TestAttachByIDLiveEnsuresNothing pins the live branch: a machine the
+// listing answers as running is entered as it is — the raw-id dial is safe
+// on a machine that is awake, and the ensure ask exists to wake sleepers.
+func TestAttachByIDLiveEnsuresNothing(t *testing.T) {
+	fs := newFakeServer(t)
+	fs.live = []string{"vma"}
+	setupHome(t, fs.URL)
+	logPath := fakeSSH(t)
+
+	if err := attachRun([]string{"vma"}, strings.NewReader(""), os.Stdout, os.Stderr); err != nil {
+		t.Fatal(err)
+	}
+	fs.mu.Lock()
+	asks, placed := fs.ensureAsks, append([]string(nil), fs.placed...)
+	fs.mu.Unlock()
+	if asks != 0 || len(placed) != 0 {
+		t.Fatalf("a live id must be entered without an ask, got %d asks, placed %v", asks, placed)
+	}
+	assertSSHCommonOptions(t, readLog(t, logPath), "vma")
+	assertNoVMDeleted(t, fs, "attach by a live id")
+}
+
+func TestAttachByIDWakesSleepingVM(t *testing.T) {
+	fs := newFakeServer(t)
+	fs.asleep = []string{"vms"}
+	setupHome(t, fs.URL)
+	logPath := fakeSSH(t)
+	var stderr bytes.Buffer
+
+	if err := attachRun([]string{"vms"}, strings.NewReader(""), os.Stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stderr.String(), "waking") {
+		t.Fatalf("a sleeper must be announced as woken, got %q", stderr.String())
+	}
+	fs.mu.Lock()
+	asks, placed := fs.ensureAsks, append([]string(nil), fs.placed...)
+	fs.mu.Unlock()
+	if asks != 1 || len(placed) != 0 {
+		t.Fatalf("one ask must wake the named sleeper and place nothing, got %d asks, placed %v", asks, placed)
+	}
+	logged := readLog(t, logPath)
+	if n := len(argLines(logged)); n != 1 {
+		t.Fatalf("want exactly one ssh call, got %d in %s", n, logged)
+	}
+	assertSSHCommonOptions(t, logged, "vms")
+	assertTokenInChildEnvOnly(t, logged)
+	assertNoVMDeleted(t, fs, "attaching to a sleeper")
 }
 
 func TestAttachRejectsInvalidID(t *testing.T) {
@@ -241,6 +356,38 @@ func TestSplitAttachArgs(t *testing.T) {
 				tc.args, id, strings.Join(rest, " "), tc.id, tc.rest)
 		}
 	}
+}
+
+// TestAttachNoIDWakesSleepingVM pins the no-id half of the contract: the
+// Customer's one machine is found whether it is running or asleep — a
+// sleeper is woken by the one ensure ask — while a Customer with no machine
+// at all is still pointed at the commands that make one.
+func TestAttachNoIDWakesSleepingVM(t *testing.T) {
+	fs := newFakeServer(t)
+	fs.asleep = []string{"vms"}
+	setupHome(t, fs.URL)
+	logPath := fakeSSH(t)
+	var stderr bytes.Buffer
+
+	if err := attachRun(nil, strings.NewReader(""), os.Stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stderr.String(), "waking yours") {
+		t.Fatalf("the sleeper must be announced as woken, got %q", stderr.String())
+	}
+	fs.mu.Lock()
+	asks, placed := fs.ensureAsks, append([]string(nil), fs.placed...)
+	fs.mu.Unlock()
+	if asks != 1 || len(placed) != 0 {
+		t.Fatalf("one ask must wake the sleeper and place nothing, got %d asks, placed %v", asks, placed)
+	}
+	logged := readLog(t, logPath)
+	if n := len(argLines(logged)); n != 1 {
+		t.Fatalf("want exactly one ssh call, got %d in %s", n, logged)
+	}
+	assertSSHCommonOptions(t, logged, "vms")
+	assertTokenInChildEnvOnly(t, logged)
+	assertNoVMDeleted(t, fs, "attaching to a sleeper without an id")
 }
 
 func TestAttachSingleLiveVM(t *testing.T) {

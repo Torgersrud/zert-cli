@@ -226,9 +226,9 @@ func TestExtractWakesSleepingVM(t *testing.T) {
 // TestExtractSeveralRowsRefusesInsteadOfPicking pins the several-row
 // anomaly's copy-out half: a listing that does not name one machine is
 // refused before anything streams — no ssh spawn, no ensure ask — never
-// resolved by streaming out of whichever row sorted first. The refusal's
-// customer rendering is the copy arms' own (landing (c) of spec #30);
-// what this pins is that no bytes move.
+// resolved by streaming out of whichever row sorted first. The refusal
+// is the copy arms' own wording: the anomaly is admitted, the copy is
+// refused, and `zert ls` is where the server's raw answer shows.
 func TestExtractSeveralRowsRefusesInsteadOfPicking(t *testing.T) {
 	fs := newFakeServer(t)
 	setupHome(t, fs.URL)
@@ -238,11 +238,16 @@ func TestExtractSeveralRowsRefusesInsteadOfPicking(t *testing.T) {
 		t.Error("a several-row refusal must never reach the ensure ask")
 		http.Error(w, `{"detail":"no"}`, 500)
 	}
+	var stderr bytes.Buffer
 
-	if err := extractRun("~/out", t.TempDir(), os.Stderr); err == nil {
-		t.Fatal("a several-row listing must be refused, never picked from")
+	err := extractRun("~/out", t.TempDir(), &stderr)
+	if err == nil || !strings.Contains(err.Error(), "several machines") ||
+		!strings.Contains(err.Error(), "refusing to copy") ||
+		!strings.Contains(err.Error(), "`zert ls`") {
+		t.Fatalf("a several-row listing must be refused and pointed at the listing, got %v", err)
 	}
 	assertNoSSHSpawned(t, logPath, "a several-row listing")
+	assertNoVMDeleted(t, fs, "a refused extract")
 }
 
 func TestExtractTarSlipRefused(t *testing.T) {

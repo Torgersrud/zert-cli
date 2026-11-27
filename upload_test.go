@@ -200,9 +200,9 @@ func TestUploadExpiredRowSaysCreating(t *testing.T) {
 // TestUploadSeveralRowsRefusesInsteadOfPicking pins the several-row
 // anomaly's copy-in half: a listing that does not name one machine is
 // refused before anything streams — no ssh spawn, no ensure ask — never
-// resolved by silently streaming into whichever row sorted first. What
-// this pins is that no bytes move; the refusal's customer rendering is
-// the copy arms' own (landing (c) of spec #30).
+// resolved by silently streaming into whichever row sorted first. The
+// refusal is the copy arms' own wording: the anomaly is admitted, the
+// copy is refused, and `zert ls` is where the server's raw answer shows.
 func TestUploadSeveralRowsRefusesInsteadOfPicking(t *testing.T) {
 	fs := newFakeServer(t)
 	setupHome(t, fs.URL)
@@ -213,9 +213,13 @@ func TestUploadSeveralRowsRefusesInsteadOfPicking(t *testing.T) {
 		http.Error(w, `{"detail":"no"}`, 500)
 	}
 	dir := tempDirNamed(t, "mydir")
+	var stderr bytes.Buffer
 
-	if err := uploadRun(dir, nil, strings.NewReader(""), os.Stdout, os.Stderr); err == nil {
-		t.Fatal("a several-row listing must be refused, never picked from")
+	err := uploadRun(dir, nil, strings.NewReader(""), os.Stdout, &stderr)
+	if err == nil || !strings.Contains(err.Error(), "several machines") ||
+		!strings.Contains(err.Error(), "refusing to copy") ||
+		!strings.Contains(err.Error(), "`zert ls`") {
+		t.Fatalf("a several-row listing must be refused and pointed at the listing, got %v", err)
 	}
 	assertNoSSHSpawned(t, logPath, "a several-row listing")
 	assertNoVMDeleted(t, fs, "a refused upload")

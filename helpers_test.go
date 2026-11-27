@@ -236,6 +236,10 @@ const (
 	streamSwallowStdin = "cat > /dev/null"
 	streamRecordStdin  = `cat > "$FAKE_SSH_STDIN"`
 	streamReplayStdout = `cat "$FAKE_SSH_STDOUT"`
+	// streamExitRightAway reads none of its stdin: it ends the copy's far
+	// side at once, the shape of a remote command that wants no input —
+	// a child that closes the stream's start early and ends clean.
+	streamExitRightAway = "true"
 )
 
 // streamBlockUntilSignal is the shape of a long copy the user interrupts: no

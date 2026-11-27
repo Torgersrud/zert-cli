@@ -72,17 +72,6 @@ func pickLiveVM(rows []vmRow) *vmRow {
 	return nil
 }
 
-type countWriter struct {
-	w io.Writer
-	n int64
-}
-
-func (c *countWriter) Write(p []byte) (int, error) {
-	n, err := c.w.Write(p)
-	c.n += int64(n)
-	return n, err
-}
-
 // packTar streams src (file or dir) as a gzip-compressed tar rooted at base
 // into w, and returns the raw and compressed byte counts. Symlinks are
 // dereferenced (like scp -r did); broken symlinks and non-regular,

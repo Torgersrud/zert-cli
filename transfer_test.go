@@ -1,13 +1,13 @@
 package main
 
 // The transfer module's own suite — the one place the copy stream's shared
-// rules are pinned at their owner's interface, transferFromVM. The module
-// never talks to the door — its caller has already resolved credentials
-// and the machine — so these tests need no API fake, only the sshPath
-// fake-ssh seam and a codec standing in for a copy path's local half.
-// What a customer sees through each command (wordings, exit codes, the
-// streams themselves) stays pinned by that command's own suite; a rule
-// here is pinned once instead of per path.
+// rules are pinned at their owner's interface, transferFromVM and
+// transferToVM. The module never talks to the door — its caller has
+// already resolved credentials and the machine — so these tests need no
+// API fake, only the sshPath fake-ssh seam and a codec standing in for a
+// copy path's local half. What a customer sees through each command
+// (wordings, exit codes, the streams themselves) stays pinned by that
+// command's own suite; a rule here is pinned once instead of per path.
 
 import (
 	"errors"
@@ -47,6 +47,28 @@ func runTransferFromVM(t *testing.T, stdoutPath, exit string, codec func(io.Read
 		"tar -czf - -C ~ -- 'out'",
 		os.Stderr,
 		codec,
+		wording,
+	)
+}
+
+// runTransferToVM wires one transferToVM call against the fake ssh: stream
+// is the child's data behaviour (one of the stream* constants), exit the
+// child's exit code, and pack/wording the copy path's local half.
+// Credentials and machine are taken as resolved — the module asks nothing
+// of the door.
+func runTransferToVM(t *testing.T, stream, exit string, pack func(io.Writer) error, wording func(error) error) (compressed int64, err error) {
+	t.Helper()
+	fakeSSHScript(t, stream)
+	if exit != "" {
+		t.Setenv("FAKE_SSH_EXIT", exit)
+	}
+	return transferToVM(
+		&Credentials{Host: "transfer.test", Token: testToken},
+		&vmRow{SandboxID: "vmlive", Live: true},
+		"tar -xzf - -C ~",
+		io.Discard,
+		os.Stderr,
+		pack,
 		wording,
 	)
 }
@@ -140,6 +162,116 @@ func TestTransferFromVMSpawnFailureReleasesTheCodec(t *testing.T) {
 		"tar -czf - -C ~ -- 'out'",
 		os.Stderr,
 		func(r io.Reader) error { _, _ = io.ReadAll(r); return nil },
+		func(e error) error { return e })
+	if err == nil || !strings.Contains(err.Error(), "spawn ssh") {
+		t.Fatalf("want the spawn failure as the answer, got %v", err)
+	}
+}
+
+// TestTransferToVMStreamsTheWholeCodecIntoTheChild pins the to-VM stream's
+// happy path at its owner's interface: the codec's whole output crosses
+// the module's pipe into the child — the EOF that ends the child's read
+// comes from the module, not the codec, so nothing is truncated and
+// nothing hangs — and the answer counts every byte that entered the pipe.
+func TestTransferToVMStreamsTheWholeCodecIntoTheChild(t *testing.T) {
+	body := strings.Repeat("u", 128*1024)
+	stdinPath := filepath.Join(t.TempDir(), "stream.bin")
+	t.Setenv("FAKE_SSH_STDIN", stdinPath)
+
+	compressed, err := runTransferToVM(t, streamRecordStdin, "",
+		func(w io.Writer) error {
+			_, err := io.WriteString(w, body)
+			return err
+		},
+		func(e error) error { return e })
+	if err != nil {
+		t.Fatalf("a clean copy must not fail: %v", err)
+	}
+	got, rerr := os.ReadFile(stdinPath)
+	if rerr != nil || string(got) != body {
+		t.Fatalf("the child must receive the codec's whole stream, got %d bytes (read err %v)", len(got), rerr)
+	}
+	if compressed != int64(len(body)) {
+		t.Fatalf("compressed = %d, want %d: every byte that entered the pipe counts", compressed, len(body))
+	}
+}
+
+// TestTransferToVMChildExitOutranksCodec pins the failure-precedence rule
+// on the upload side of the seam: the ssh child's own failure is
+// authoritative — its exit code preserved so zert exits with what ssh
+// exited with — even when the codec also failed, the way a truncated
+// transfer leaves it failing.
+func TestTransferToVMChildExitOutranksCodec(t *testing.T) {
+	sentinel := errors.New("source vanished mid-pack")
+	_, err := runTransferToVM(t, streamSwallowStdin, "1",
+		func(w io.Writer) error {
+			_, _ = io.WriteString(w, "partial stream")
+			return sentinel
+		},
+		func(e error) error { return fmt.Errorf("packing /abs: %w", e) })
+	var ee *exitError
+	if !errors.As(err, &ee) || ee.code != 1 {
+		t.Fatalf("the child's exit code must outrank the codec's failure, got %v", err)
+	}
+}
+
+// TestTransferToVMCodecFailureSurfacesThroughTheChildsReport pins how a
+// codec failure reaches the customer on the upload side: the raw error is
+// the payload that ends the pipe, so the child's own stdin copy fails with
+// it and the customer sees it through the one "run ssh:" report — the
+// codec's own words kept, the module's wording constructor uninvoked.
+func TestTransferToVMCodecFailureSurfacesThroughTheChildsReport(t *testing.T) {
+	sentinel := errors.New("source vanished mid-pack")
+	_, err := runTransferToVM(t, streamSwallowStdin, "",
+		func(w io.Writer) error {
+			_, _ = io.WriteString(w, "partial stream")
+			return sentinel
+		},
+		func(e error) error { return fmt.Errorf("packing /abs: %w", e) })
+	if !errors.Is(err, sentinel) || !strings.HasPrefix(err.Error(), "run ssh: ") {
+		t.Fatalf("a codec failure must reach the customer through the child's report, carrying the codec's own words, got %v", err)
+	}
+}
+
+// TestTransferToVMClosedPipeIsFallout pins the rule's dismissal on the
+// upload side: a child that closes its stdin early and ends clean leaves
+// the codec's blocked writes failing on a closed pipe — the fallout of a
+// truncated transfer, not a failure of the copy. The module's release of
+// the pipe's read end is what turns a would-be hang into that dismissed
+// fallout.
+func TestTransferToVMClosedPipeIsFallout(t *testing.T) {
+	_, err := runTransferToVM(t, streamExitRightAway, "",
+		func(w io.Writer) error {
+			// more than the child's stdin can buffer: some write is
+			// always left blocked when the child leaves
+			_, err := io.WriteString(w, strings.Repeat("u", 512*1024))
+			return err
+		},
+		func(e error) error { return e })
+	if err != nil {
+		t.Fatalf("a closed pipe under a clean child is fallout, not failure, got %v", err)
+	}
+}
+
+// TestTransferToVMSpawnFailureReleasesTheCodec pins the module's
+// spawn-failure handling on the upload side: a child that never started is
+// gone the same way a finished one is — the closed read end hands the
+// codec's blocked write its failure instead of a hang — and the spawn
+// failure is the answer.
+func TestTransferToVMSpawnFailureReleasesTheCodec(t *testing.T) {
+	sshPath = filepath.Join(t.TempDir(), "no-such-ssh")
+	t.Cleanup(func() { sshPath = "ssh" })
+
+	_, err := transferToVM(
+		&Credentials{Host: "transfer.test", Token: testToken},
+		&vmRow{SandboxID: "vmlive", Live: true},
+		"tar -xzf - -C ~",
+		io.Discard,
+		os.Stderr,
+		func(w io.Writer) error {
+			_, err := io.WriteString(w, "stream no child will ever read")
+			return err
+		},
 		func(e error) error { return e })
 	if err == nil || !strings.Contains(err.Error(), "spawn ssh") {
 		t.Fatalf("want the spawn failure as the answer, got %v", err)

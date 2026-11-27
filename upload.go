@@ -229,11 +229,11 @@ func uploadRun(arg string, sshArgs []string, stdin io.Reader, stdout, stderr io.
 		return err
 	}
 	// the listing does not name one machine: no copy may silently
-	// stream into whichever row sorted first — the anomaly is refused,
-	// and the refusal's customer rendering is the copy arms' (landing
-	// (c) of spec #30)
+	// stream into whichever row sorted first — the anomaly is refused
+	// in the copy arms' one wording, which admits it and points at the
+	// listing
 	if which == doorRowSeveral {
-		return errUnusualListing
+		return errSeveralMachinesNoCopy
 	}
 	if err := ensurePubkey(a, me, stderr); err != nil {
 		return err

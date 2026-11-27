@@ -34,3 +34,15 @@ func TestInvalidVMIDWording(t *testing.T) {
 		t.Fatalf("invalid-id wording = %q, want %q", got, want)
 	}
 }
+
+// The copy arms' several-row refusal: the anomaly is admitted, the copy
+// is refused — a file must never land on or leave a machine the Customer
+// did not choose — and `zert ls` is where the server's raw answer shows.
+// Status admits the same anomaly without refusing, because it acts on no
+// row; the copy arms act, so their wording names the refusal.
+func TestSeveralMachinesNoCopyWording(t *testing.T) {
+	if got, want := errSeveralMachinesNoCopy.Error(),
+		"several machines are listed — refusing to copy to or from one you did not choose; `zert ls` shows what the server says"; got != want {
+		t.Fatalf("copy-refusal wording = %q, want %q", got, want)
+	}
+}

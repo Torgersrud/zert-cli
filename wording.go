@@ -30,4 +30,14 @@ var (
 	// `zert ls` is where the server's raw answer shows. Status admits
 	// it; every path that would act on a row refuses on it.
 	errUnusualListing = errors.New("your machine listing is unusual — `zert ls` shows what the server says")
+
+	// errSeveralMachinesNoCopy is the copy arms' several-row refusal,
+	// the acting half of errUnusualListing's truth: a file must never
+	// land on or leave a machine the Customer did not choose, so the
+	// copy refuses — admits the anomaly, names the refusal, and points
+	// at the listing — instead of streaming to whichever row sorted
+	// first. Status admits the same anomaly without refusing, because
+	// it acts on no row; the copy arms act, so their wording names the
+	// refusal.
+	errSeveralMachinesNoCopy = errors.New("several machines are listed — refusing to copy to or from one you did not choose; `zert ls` shows what the server says")
 )

@@ -214,7 +214,7 @@ func TestVM502RetriesOnce(t *testing.T) {
 			return
 		}
 		w.WriteHeader(201)
-		json.NewEncoder(w).Encode(map[string]any{"sandbox_id": "vm123", "expires_at": json.Number("9999999999")})
+		json.NewEncoder(w).Encode(map[string]any{"sandbox_id": "vm123", "expires_at": json.Number("9999999999"), "state": "running"})
 	}
 
 	if err := vmRun([]string{"--keep"}, strings.NewReader(""), os.Stdout, os.Stderr); err != nil {
@@ -222,13 +222,61 @@ func TestVM502RetriesOnce(t *testing.T) {
 	}
 }
 
-func TestCreateVMRejectsMaliciousID(t *testing.T) {
+// TestEnsureTwiceAnswersSameMachine pins the ticket's headline: POST /v1/vm
+// is the ensure ask, so a second ask must answer the machine the first one
+// placed — never place a second — and the command's wording must tell the
+// Customer which of the two happened. The fake server places a machine only
+// when the account has none, and records every placement, so "the second
+// call placed nothing" is read off fs.placed.
+func TestEnsureTwiceAnswersSameMachine(t *testing.T) {
+	fs := newFakeServer(t)
+	setupHome(t, fs.URL)
+	logPath := fakeSSH(t)
+
+	var first, second bytes.Buffer
+	if err := vmRun(nil, strings.NewReader(""), os.Stdout, &first); err != nil {
+		t.Fatal(err)
+	}
+	if err := vmRun(nil, strings.NewReader(""), os.Stdout, &second); err != nil {
+		t.Fatal(err)
+	}
+
+	lines := argLines(readLog(t, logPath))
+	if len(lines) != 2 {
+		t.Fatalf("want one ssh call per ask, got %d: %s", len(lines), lines)
+	}
+	for _, line := range lines {
+		if !strings.Contains(line, "user@vm123") {
+			t.Fatalf("both asks must answer the same machine, got %q", line)
+		}
+	}
+	fs.mu.Lock()
+	placed := append([]string(nil), fs.placed...)
+	asks := fs.ensureAsks
+	fs.mu.Unlock()
+	if len(placed) != 1 || placed[0] != "vm123" {
+		t.Fatalf("the second ask must place nothing, placements: %v", placed)
+	}
+	if asks != 2 {
+		t.Fatalf("each ask must reach the door, want 2 POSTs, got %d", asks)
+	}
+	// the ensure response carries no outcome word, so the listing pre-check
+	// decides what the command reports
+	if !strings.Contains(first.String(), "creating vm") || strings.Contains(first.String(), "found your vm") {
+		t.Fatalf("a customer with nothing must be told a machine was created: %q", first.String())
+	}
+	if !strings.Contains(second.String(), "found your vm") || strings.Contains(second.String(), "creating vm") {
+		t.Fatalf("a customer with a machine must be told it was found: %q", second.String())
+	}
+}
+
+func TestEnsureRejectsMaliciousID(t *testing.T) {
 	fs := newFakeServer(t)
 	fs.create = func(w http.ResponseWriter, _ int) {
 		w.WriteHeader(201)
-		io.WriteString(w, `{"sandbox_id":"x; touch /tmp/pwned","expires_at":9999999999}`)
+		io.WriteString(w, `{"sandbox_id":"x; touch /tmp/pwned","expires_at":9999999999,"state":"running"}`)
 	}
-	_, err := createVM(api{host: fs.URL})
+	_, err := ensureVM(api{host: fs.URL})
 	if err == nil || !strings.Contains(err.Error(), "invalid vm id") {
 		t.Fatalf("want invalid-vm-id error, got %v", err)
 	}
@@ -243,7 +291,7 @@ func TestVMNoSpawnOnMaliciousID(t *testing.T) {
 	logPath := fakeSSH(t)
 	fs.create = func(w http.ResponseWriter, _ int) {
 		w.WriteHeader(201)
-		io.WriteString(w, `{"sandbox_id":"x; touch /tmp/pwned"}`)
+		io.WriteString(w, `{"sandbox_id":"x; touch /tmp/pwned","state":"running"}`)
 	}
 	if err := vmRun([]string{"--keep"}, strings.NewReader(""), os.Stdout, io.Discard); err == nil {
 		t.Fatal("expected error from malicious id")

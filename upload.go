@@ -244,8 +244,16 @@ func uploadRun(arg string, sshArgs []string, stdin io.Reader, stdout, stderr io.
 	vm := pickLiveVM(rows)
 	created := false
 	if vm == nil {
-		fmt.Fprintln(stderr, "no live vm — creating one …")
-		vm, err = createVM(a)
+		// the same pre-check as the vm command, on the listing already in
+		// hand: rows without a live machine mean an Asleep one in the
+		// sleep model, so ensure wakes the Customer's machine — only a
+		// customer with nothing gets one placed
+		if len(rows) > 0 {
+			fmt.Fprintln(stderr, "no live vm — waking yours …")
+		} else {
+			fmt.Fprintln(stderr, "no live vm — creating one …")
+		}
+		vm, err = ensureVM(a)
 		if err != nil {
 			return err
 		}

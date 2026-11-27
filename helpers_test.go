@@ -44,6 +44,13 @@ type fakeServer struct {
 	expired     []string       // sandbox ids reported as not live by GET /v1/vm
 	deleteFail  map[string]int // id -> status code for failing DELETEs
 	create      func(w http.ResponseWriter, tries int)
+	// POST /v1/vm is the door's ensure call, and the fake models its
+	// contract: ensureAsks counts every ask, and placed records only the
+	// asks that placed a machine — a customer who already has one gets it
+	// answered, so a second ask places nothing (backend docs.md, "VM
+	// ensure request contract").
+	ensureAsks int
+	placed     []string
 }
 
 func newFakeServer(t *testing.T) *fakeServer {
@@ -74,19 +81,43 @@ func newFakeServer(t *testing.T) *fakeServer {
 			creates++
 			n := creates
 			muCreateMu.Unlock()
+			fs.mu.Lock()
+			fs.ensureAsks++
+			fs.mu.Unlock()
 			if fs.create != nil {
 				fs.create(w, n)
 				return
 			}
+			// the default answer is ensure: the customer's machine is
+			// answered when one exists, and one is placed only when
+			// none does
+			fs.mu.Lock()
+			id := ""
+			switch {
+			case len(fs.live) > 0:
+				id = fs.live[0]
+			case len(fs.placed) > 0:
+				id = fs.placed[0]
+			default:
+				fs.placed = append(fs.placed, "vm123")
+				id = "vm123"
+			}
+			fs.mu.Unlock()
 			w.WriteHeader(201)
 			json.NewEncoder(w).Encode(map[string]any{
-				"sandbox_id": "vm123", "expires_at": json.Number("9999999999"),
+				"sandbox_id": id, "expires_at": json.Number("9999999999"),
+				"state": "running",
 			})
 			return
 		}
 		fs.mu.Lock()
 		var rows []map[string]any
 		for _, id := range fs.live {
+			rows = append(rows, map[string]any{
+				"sandbox_id": id, "expires_at": 9999999999.0, "live": true,
+			})
+		}
+		for _, id := range fs.placed {
 			rows = append(rows, map[string]any{
 				"sandbox_id": id, "expires_at": 9999999999.0, "live": true,
 			})

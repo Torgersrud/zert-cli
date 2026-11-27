@@ -35,11 +35,10 @@ func killIDs(a api, stderr io.Writer, ids []string) error {
 	return nil
 }
 
+// cmdKill ends machines: bare (no args) and `all` both take down every
+// vm the listing answers, explicit ids take down those alone.
 func cmdKill(args []string) error {
-	if len(args) == 0 || args[0] == "" {
-		return errors.New("usage: zert kill <id>|all")
-	}
-	if killAll(args) {
+	if len(args) == 0 || killAll(args) {
 		_, a := requireLogin()
 		rows, err := listVMs(a)
 		if err != nil {

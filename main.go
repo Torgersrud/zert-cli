@@ -51,7 +51,8 @@ usage:
                                  session never kills the VM — only zert
                                  kill ends it — an idle machine falls
                                  asleep and your next connect wakes it
-  zert kill <id>..|all           terminate VM(s)
+  zert kill [<id>..|all]         terminate VM(s) — bare kill ends every
+                                 vm the listing answers, same as all
   zert extract <vm-path> [dir]   copy a file/dir from your live vm
                                  into [dir] (default: current dir); vm
                                  paths resolve against the vm user's home

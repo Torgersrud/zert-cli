@@ -244,8 +244,11 @@ func uploadRun(arg string, sshArgs []string, stdin io.Reader, stdout, stderr io.
 	vm := pickLiveVM(rows)
 	created := false
 	if vm == nil {
-		fmt.Fprintln(stderr, "no live vm — creating one …")
-		vm, err = createVM(a)
+		// the same pre-check as the vm command, on the listing already in
+		// hand: wakeOrCreate announces the ask the listing calls for —
+		// waking an Asleep row, placing one when nothing answerable is
+		// listed — and makes it
+		vm, err = wakeOrCreate(a, rows, stderr)
 		if err != nil {
 			return err
 		}

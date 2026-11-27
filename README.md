@@ -33,10 +33,14 @@ Prebuilt binaries for every platform are on the
 ```sh
 zert login
 zert vm                         # create a VM and ssh into it (leaving never kills it)
-zert attach                     # back into a running VM (same shell, id optional)
+zert attach                     # back into your VM (same shell, id optional;
+                                 # a sleeping one wakes)
 zert ./myproject                # run a zert vm with your repo
 zert extract ~/report.pdf       # copy a file/dir out of your live vm
-zert ls                         # list your VMs and their time left
+zert status                     # your machine in plain words: running with
+                                 # its time left, asleep, or none yet
+zert ls                         # the technical listing: raw ids with state
+                                 # words and time left
 zert kill <id>                  # terminate a VM
 zert kill all                   # terminate all your VMs
 zert --version
@@ -46,13 +50,27 @@ zert --version
 session afterwards; when you leave, that VM keeps running. If one is
 already live it just copies into it.
 
-`zert attach [id]` is how you come back to a VM that is still running: with
-exactly one live VM the id is optional, with several you have to name one
-(`zert ls` lists them), and with none it points you at `zert vm`. An attach
-to a VM whose Idle window has run out says so instead of hanging:
-"vm <id> expired — start a new one with `zert vm`". Leaving an attached
-session never kills the VM either — only `zert kill` or an expired Idle
-window ends it.
+`zert status` answers the one question — is my machine on? — in plain
+words: a running machine says so with the time its Idle window has left,
+a sleeping one says `asleep` (it wakes on your next connect, with
+everything as you left it), one still being made says so, and having
+none says that and points at `zert vm`. A state this version of the CLI
+has never seen is admitted, not guessed at. Raw ids appear in `zert ls`
+and nowhere else on the customer-facing surface.
+
+`zert attach [id]` is how you come back to your VM: with exactly one
+machine (running or asleep) the id is optional, with several running you
+have to name one (`zert ls` lists them), and with none it points you at
+`zert vm`. A machine that fell asleep wakes when you attach — a few
+seconds' pause, then the same shell, with everything as you left it. An attach to an id
+that is gone or not yours says so: "no such vm <id> — zert ls lists
+your vms" — and that refusal can be the reason a machine exists: waking a
+named sleeper goes through the door's one ensure ask, which places a fresh
+machine when the sleeper turns out genuinely gone (the door has no
+wake-by-id that places nothing), so `zert status` may show a machine the
+refusal minted. Leaving an attached session never kills the VM either — only
+`zert kill` ends it: an idle machine falls asleep, and your next connect
+wakes it.
 
 Every interactive entry (`zert vm`, `zert attach`, and the entry after a
 copy) runs inside one tmux session in the VM, named `zert`. That is what
@@ -76,7 +94,8 @@ To add args for the zert ssh session, pass them after the command
 (e.g. `zert vm -L 8080:localhost:8080` or `zert ./myproject -L 8080:localhost:8080`).
 With `zert <path>`, extra ssh args also make you enter an already-running
 VM after the copy. Entering — and leaving — never ends a VM either way;
-`zert kill` (or an expired Idle window) is the only way one dies. The old
+`zert kill` is the only way one dies — an idle machine falls asleep
+instead. The old
 `--keep` flag is still accepted on every entry command (`zert vm`,
 `zert attach`, `zert <path>`) for existing scripts; it prints
 `--keep is obsolete — vms no longer die on exit` and changes nothing.
@@ -94,9 +113,9 @@ Short version: HTTPS is enforced (plain `http://` only for loopback or an
 explicit `--insecure` flag), tokens never touch argv or URL query strings, and
 server text is sanitized against terminal-escape injection. Full notes in
 [SECURITY.md](SECURITY.md); known limitations and planned hardening (host-key
-pinning, token revocation, idempotent create) are tracked in
-[docs/FOLLOWUPS.md](docs/FOLLOWUPS.md). Report vulnerabilities privately — see
-SECURITY.md.
+pinning, token revocation) are tracked in [docs/FOLLOWUPS.md](docs/FOLLOWUPS.md)
+— its idempotent-create item is closed there: `POST /v1/vm` is now the door's
+idempotent ensure call. Report vulnerabilities privately — see SECURITY.md.
 
 ## Development
 

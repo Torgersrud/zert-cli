@@ -40,9 +40,15 @@ func wsURL(host, id string) (string, error) {
 	return u.String(), nil
 }
 
+// closeCodeMsg is the fallback table for servers that close without a
+// reason. Its 4403 line covers two truths the wire cannot tell apart: the
+// server refuses an id that is not one of the Customer's machines and a
+// sleeping one with the same bare close and no reason, so the message
+// admits both and teaches the way back — connecting is what wakes a
+// sleeper.
 var closeCodeMsg = map[websocket.StatusCode]string{
 	4401: "session expired — run `zert login`",
-	4403: "no such vm (or not yours)",
+	4403: "no such vm (or not yours), or it is asleep — connecting to it (zert vm / ssh zert) wakes it",
 	4410: "vm expired — start a new one with `zert vm`",
 }
 
@@ -205,6 +211,12 @@ func tunnelRun(ctx context.Context, host, id, token string, in io.Reader, out io
 	return <-errc
 }
 
+// tunnelMe is the stable name's sentinel: the one word an ssh config can
+// carry forever. It is not a vm id — it asks the door's ensure call and
+// dials the concrete machine that call answers, so the id exists only
+// inside that call and the tunnel URL (GLOSSARY.md: Stable name).
+const tunnelMe = "me"
+
 func cmdTunnel(args []string) error {
 	fs := newFlagSet("tunnel")
 	if err := fs.Parse(args); err != nil {
@@ -214,12 +226,26 @@ func cmdTunnel(args []string) error {
 		return fmt.Errorf("usage: zert tunnel <vm-id>")
 	}
 	id := fs.Arg(0)
-	if !validSandboxID(id) {
+	if id != tunnelMe && !validSandboxID(id) {
 		return errors.New("invalid vm id")
 	}
 	host, token, err := resolveTunnelTarget()
 	if err != nil {
 		return err
+	}
+	if id == tunnelMe {
+		// the stable name: one ensure ask answers the Customer's one
+		// machine — placed, woken, or returned live — before the relay
+		// opens, so the byte path dials a machine that is awake. A
+		// refusal passes through with its message: the Customer learns
+		// the wake path or the reason, never a silent hang. Nothing is
+		// printed on success — a wake is a few seconds' pause, and the
+		// id the ask resolved stays invisible.
+		vm, err := ensureVM(api{host: host, token: token})
+		if err != nil {
+			return err
+		}
+		id = vm.SandboxID
 	}
 	return tunnelRun(context.Background(), host, id, token, os.Stdin, os.Stdout)
 }

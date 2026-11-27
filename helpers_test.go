@@ -20,6 +20,7 @@ package main
 // path fails the suite.
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -30,6 +31,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/coder/websocket"
 )
 
 // --- the API fake -------------------------------------------------------
@@ -41,9 +44,24 @@ type fakeServer struct {
 	keyUploaded string
 	pubkey      *string        // what /v1/me reports
 	live        []string       // sandbox ids reported as live by GET /v1/vm
+	asleep      []string       // ids reported as asleep: live=false, asleep=true, no clock (the door answers expires_at null)
+	creating    []string       // ids reported as mid-create: live=false, creating=true
 	expired     []string       // sandbox ids reported as not live by GET /v1/vm
 	deleteFail  map[string]int // id -> status code for failing DELETEs
 	create      func(w http.ResponseWriter, tries int)
+	// POST /v1/vm is the door's ensure call, and the fake models its
+	// contract: ensureAsks counts every ask, and placed records only the
+	// asks that placed a machine — a customer who already has one gets it
+	// answered, so a second ask places nothing (backend docs.md, "VM
+	// ensure request contract").
+	ensureAsks int
+	placed     []string
+	// the door's relay route, recorded the same way: tunnelPaths is every
+	// WS path the relay answered — which id was dialled — and tunnelAuth
+	// is the authorization header the dial carried, where the token must
+	// ride and nowhere else.
+	tunnelPaths []string
+	tunnelAuth  string
 }
 
 func newFakeServer(t *testing.T) *fakeServer {
@@ -74,13 +92,37 @@ func newFakeServer(t *testing.T) *fakeServer {
 			creates++
 			n := creates
 			muCreateMu.Unlock()
+			fs.mu.Lock()
+			fs.ensureAsks++
+			fs.mu.Unlock()
 			if fs.create != nil {
 				fs.create(w, n)
 				return
 			}
+			// the default answer is ensure: the customer's machine is
+			// answered when one exists — a live one as it is, an Asleep
+			// one woken to running under its own id, which the next
+			// listing states — and one is placed only when none does
+			fs.mu.Lock()
+			id := ""
+			switch {
+			case len(fs.live) > 0:
+				id = fs.live[0]
+			case len(fs.asleep) > 0:
+				id = fs.asleep[0]
+				fs.asleep = append([]string(nil), fs.asleep[1:]...)
+				fs.live = append(fs.live, id)
+			case len(fs.placed) > 0:
+				id = fs.placed[0]
+			default:
+				fs.placed = append(fs.placed, "vm123")
+				id = "vm123"
+			}
+			fs.mu.Unlock()
 			w.WriteHeader(201)
 			json.NewEncoder(w).Encode(map[string]any{
-				"sandbox_id": "vm123", "expires_at": json.Number("9999999999"),
+				"sandbox_id": id, "expires_at": json.Number("9999999999"),
+				"state": "running",
 			})
 			return
 		}
@@ -89,6 +131,25 @@ func newFakeServer(t *testing.T) *fakeServer {
 		for _, id := range fs.live {
 			rows = append(rows, map[string]any{
 				"sandbox_id": id, "expires_at": 9999999999.0, "live": true,
+			})
+		}
+		for _, id := range fs.placed {
+			rows = append(rows, map[string]any{
+				"sandbox_id": id, "expires_at": 9999999999.0, "live": true,
+			})
+		}
+		// sleep-model rows per the door's contract (public.py list_vm): an
+		// Asleep row is listed as itself — never "no VMs" — and carries no
+		// deadline, so a reader must take its state from the flag, never
+		// from the clock
+		for _, id := range fs.asleep {
+			rows = append(rows, map[string]any{
+				"sandbox_id": id, "expires_at": nil, "live": false, "asleep": true,
+			})
+		}
+		for _, id := range fs.creating {
+			rows = append(rows, map[string]any{
+				"sandbox_id": id, "expires_at": 9999999999.0, "live": false, "creating": true,
 			})
 		}
 		for _, id := range fs.expired {
@@ -114,9 +175,37 @@ func newFakeServer(t *testing.T) *fakeServer {
 		}
 		json.NewEncoder(w).Encode(map[string]string{"killed": "vm123"})
 	})
+	mux.HandleFunc("/v1/tunnel/", func(w http.ResponseWriter, r *http.Request) {
+		fs.mu.Lock()
+		fs.tunnelPaths = append(fs.tunnelPaths, r.URL.Path)
+		fs.tunnelAuth = r.Header.Get("authorization")
+		fs.mu.Unlock()
+		wsconn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		// one echoed frame, then the relay closes: enough to prove the
+		// byte path moved, exactly the stubTunnelServer shape
+		ctx := context.Background()
+		_, data, rerr := wsconn.Read(ctx)
+		if rerr != nil {
+			return
+		}
+		wsconn.Write(ctx, websocket.MessageBinary, data)
+		wsconn.Close(websocket.StatusNormalClosure, "")
+	})
 	fs.Server = httptest.NewServer(mux)
 	t.Cleanup(fs.Close)
 	return fs
+}
+
+// ensureCounts reads the fake's ensure bookkeeping in one locked pass:
+// every ask the door heard, and the placements among them. Every test that
+// asserts on the ask reads it through here, so the locking exists once.
+func (fs *fakeServer) ensureCounts() (asks int, placed []string) {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	return fs.ensureAsks, append([]string(nil), fs.placed...)
 }
 
 func strptr(s string) *string { return &s }
@@ -354,16 +443,37 @@ func tempDirNamed(t *testing.T, name string) string {
 	return dir
 }
 
-// captureStderr runs fn with os.Stderr redirected to a pipe and returns what
-// was written. Only needed for code that hardwires os.Stderr.
-func captureStderr(t *testing.T, fn func()) string {
+// captureOutput runs fn with the standard stream dst points at redirected
+// to a pipe and returns what was written — the reading half for every
+// command that hardwires os.Stdout or os.Stderr: the status/ls renderings,
+// the machine-readable stream a GUI reads off the hidden engine, and the
+// tunnel's close-code notices.
+func captureOutput(t *testing.T, dst **os.File, fn func()) string {
 	t.Helper()
-	old := os.Stderr
-	r, w, _ := os.Pipe()
-	os.Stderr = w
+	old := *dst
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	*dst = w
 	fn()
 	w.Close()
-	os.Stderr = old
-	b, _ := io.ReadAll(r)
+	*dst = old
+	b, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal(err)
+	}
 	return string(b)
+}
+
+// captureStdout returns what fn wrote to os.Stdout.
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	return captureOutput(t, &os.Stdout, fn)
+}
+
+// captureStderr returns what fn wrote to os.Stderr.
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	return captureOutput(t, &os.Stderr, fn)
 }

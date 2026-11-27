@@ -28,7 +28,7 @@ func attachRun(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	vm, err := resolveAttachTarget(rows, id)
+	vm, err := resolveAttachTarget(a, rows, id, stderr)
 	if err != nil {
 		return err
 	}
@@ -36,29 +36,66 @@ func attachRun(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	return enterVM(creds, vm, sshArgs, stdin, stdout, stderr)
 }
 
+// errNoSuchVM is the house wording for an id that is not one of the
+// Customer's machines: absent from their listing, or an ensure ask that
+// answered a different machine. It points at the listing, never at a
+// machine the Customer did not name.
+func errNoSuchVM(id string) error {
+	return fmt.Errorf("no such vm %s — zert ls lists your vms", id)
+}
+
 // resolveAttachTarget picks the vm to enter: the one named by id, or the lone
-// live vm when no id was given.
-func resolveAttachTarget(rows []vmRow, id string) (*vmRow, error) {
+// live vm when no id was given. Under the sleep model a machine that is
+// Asleep is the Customer's machine waiting, not an expired one — it is woken
+// through the door's ensure ask before it is handed back, so no relay ever
+// dials a sleeping id. A row the door cannot hand over at all keeps the
+// expired wording, and an id the ask does not answer keeps the not-found one.
+func resolveAttachTarget(a api, rows []vmRow, id string, stderr io.Writer) (*vmRow, error) {
 	if id != "" {
 		for i := range rows {
-			if rows[i].SandboxID == id {
-				if !rows[i].Live {
-					// the server would only answer a bare 4410 close on
-					// this dial — say what it means instead
-					return nil, fmt.Errorf("vm %s expired — start a new one with `zert vm`", id)
-				}
+			if rows[i].SandboxID != id {
+				continue
+			}
+			switch {
+			case rows[i].Live:
 				return &rows[i], nil
+			case rows[i].Asleep:
+				// the sleeper is woken through the same ask that powers
+				// the stable name — ensure is the door's one answer to
+				// "give me my machine" — before the relay opens
+				fmt.Fprintf(stderr, "vm %s is asleep — waking it …\n", id)
+				vm, err := ensureVM(a)
+				if err != nil {
+					return nil, err
+				}
+				if vm.SandboxID != id {
+					// ensure settled the gone sleeper and placed the
+					// fresh machine: the named id is not one the
+					// Customer has, and the fresh one is not the
+					// machine they asked to enter. The refusal
+					// minted that machine — ensure is the door's
+					// only wake path and no non-placing
+					// wake-by-id exists, so an ask for a sleeper
+					// that turns out genuinely gone places one by
+					// the door's contract, and this guard declines
+					// to enter what the Customer did not name
+					// (TestAttachByIDGoneSleeperRefusedByAnswer)
+					return nil, errNoSuchVM(id)
+				}
+				return vm, nil
+			default:
+				// the server would only answer a bare 4410 close on
+				// this dial — say what it means instead
+				return nil, fmt.Errorf("vm %s expired — start a new one with `zert vm`", id)
 			}
 		}
-		return nil, fmt.Errorf("no such vm %s — zert ls lists your vms", id)
+		return nil, errNoSuchVM(id)
 	}
 	live := liveVMs(rows)
-	switch len(live) {
-	case 0:
-		return nil, errNoLiveVM
-	case 1:
+	switch {
+	case len(live) == 1:
 		return live[0], nil
-	default:
+	case len(live) > 1:
 		ids := make([]string, 0, len(live))
 		for _, r := range live {
 			ids = append(ids, r.SandboxID)
@@ -66,6 +103,24 @@ func resolveAttachTarget(rows []vmRow, id string) (*vmRow, error) {
 		return nil, fmt.Errorf("%d live vms (%s) — name the one you want: zert attach <id>",
 			len(live), strings.Join(ids, ", "))
 	}
+	// no live vm, but the Customer's one machine may be Asleep: the same
+	// ensure ask that places one for a Customer with nothing wakes it, and
+	// whatever machine it answers is the one machine — only a Customer
+	// with nothing at all is sent to the commands that make one
+	if hasAsleepVM(rows) {
+		return wakeOrCreate(a, rows, stderr)
+	}
+	return nil, errNoLiveVM
+}
+
+// hasAsleepVM reports whether any listed row is a sleeper.
+func hasAsleepVM(rows []vmRow) bool {
+	for _, r := range rows {
+		if r.Asleep {
+			return true
+		}
+	}
+	return false
 }
 
 // splitAttachArgs takes the vm id off the args, wherever it was placed.

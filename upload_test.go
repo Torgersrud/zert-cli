@@ -140,6 +140,63 @@ func TestUploadUsesLiveVM(t *testing.T) {
 	}
 }
 
+// TestUploadWakesSleepingVM pins the copy-in path's waking branch: a
+// machine that fell asleep is woken by the one ensure ask before the copy
+// dials, so the transfer and the entry after it land in the machine that
+// was asleep — never in a fresh one placed past it.
+func TestUploadWakesSleepingVM(t *testing.T) {
+	fs := newFakeServer(t)
+	fs.asleep = []string{"vms"}
+	setupHome(t, fs.URL)
+	logPath := fakeSSH(t)
+	var stderr bytes.Buffer
+	dir := tempDirNamed(t, "mydir")
+
+	if err := uploadRun(dir, nil, strings.NewReader(""), os.Stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if got := stderr.String(); !strings.Contains(got, "waking yours") || strings.Contains(got, "creating one") {
+		t.Fatalf("a sleeper must be announced as woken, never as created, got %q", got)
+	}
+	asks, placed := fs.ensureCounts()
+	if asks != 1 || len(placed) != 0 {
+		t.Fatalf("one ask must wake the sleeper and place nothing, got %d asks, placed %v", asks, placed)
+	}
+	logged := readLog(t, logPath)
+	lines := argLines(logged)
+	if len(lines) != 2 {
+		t.Fatalf("want the copy and the post-copy entry, got %d ssh calls: %s", len(lines), logged)
+	}
+	if !strings.Contains(lines[0], uploadRemoteCmd) || !strings.Contains(lines[0], "user@vms") {
+		t.Fatalf("the copy must stream into the woken machine: %s", lines[0])
+	}
+	if !strings.Contains(lines[1], "user@vms") {
+		t.Fatalf("the post-copy entry must be the woken machine: %s", lines[1])
+	}
+	assertSSHCommonOptions(t, logged, "vms")
+	assertTokenInChildEnvOnly(t, logged)
+	assertNoVMDeleted(t, fs, "an upload that wakes a sleeper")
+}
+
+// TestUploadExpiredRowSaysCreating pins the copy-in path's half of the
+// same truth: a dead row is not a sleeper, so a customer whose only row is
+// expired hears a machine being placed — never "waking yours".
+func TestUploadExpiredRowSaysCreating(t *testing.T) {
+	fs := newFakeServer(t)
+	fs.expired = []string{"vmdead"}
+	setupHome(t, fs.URL)
+	fakeSSH(t)
+	var stderr bytes.Buffer
+	dir := tempDirNamed(t, "mydir")
+
+	if err := uploadRun(dir, nil, strings.NewReader(""), os.Stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stderr.String(), "creating one") || strings.Contains(stderr.String(), "waking yours") {
+		t.Fatalf("an expired row must be told creating, never waking, got %q", stderr.String())
+	}
+}
+
 func TestUploadSSHArgsForwarded(t *testing.T) {
 	fs := newFakeServer(t)
 	setupHome(t, fs.URL)

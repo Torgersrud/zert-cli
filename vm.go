@@ -59,15 +59,49 @@ func findLocalPubkey() (string, error) {
 	return "", errors.New("no ssh key found: run `ssh-keygen -t ed25519` first")
 }
 
-func createVM(a api) (*vmRow, error) {
+// hasAnswerableVM reports whether the listing carries a machine the door's
+// ensure ask answers as the Customer's own — one that is running or
+// asleep. Rows that are neither (expired, or a state word this build has
+// never seen) are dead rows: they answer nothing, and the ask places a
+// machine instead.
+func hasAnswerableVM(rows []vmRow) bool {
+	for _, r := range rows {
+		if r.Live || r.Asleep {
+			return true
+		}
+	}
+	return false
+}
+
+// wakeOrCreate announces the ensure ask a customer without a live machine
+// makes, and makes it: the machine is theirs and asleep — woken — or
+// nothing answerable is listed and one is placed. The wording lives here
+// once, so the escape hatch and the copy-in path tell the same story.
+func wakeOrCreate(a api, rows []vmRow, stderr io.Writer) (*vmRow, error) {
+	if hasAsleepVM(rows) {
+		fmt.Fprintln(stderr, "no live vm — waking yours …")
+	} else {
+		fmt.Fprintln(stderr, "no live vm — creating one …")
+	}
+	return ensureVM(a)
+}
+
+// ensureVM asks the door for the Customer's one machine — POST /v1/vm is the
+// ensure call ("give me my machine"): a live machine is answered as it is, an
+// Asleep one is woken, and only a Customer with nothing gets one placed. The
+// response says what the machine is, never which of the three happened, so a
+// caller that needs to tell the Customer that learns it from a listing before
+// the ask.
+func ensureVM(a api) (*vmRow, error) {
 	resp, data, err := a.do("POST", "/v1/vm", map[string]any{})
 	if err != nil {
 		return nil, err
 	}
 	if resp.StatusCode == http.StatusBadGateway {
-		// one automatic retry per phase2.md. NOTE: POST /v1/vm is NOT
-		// idempotent, so a 502 that actually reached the backend could create
-		// a duplicate VM; requires a server-side idempotency key to fix.
+		// one automatic retry, and a safe one now: the route is
+		// idempotent ensure, so a 502 that actually reached the door
+		// answered the Customer's machine, and asking again returns
+		// that machine instead of placing a second one.
 		resp, data, err = a.do("POST", "/v1/vm", map[string]any{})
 		if err != nil {
 			return nil, err
@@ -90,12 +124,19 @@ func createVM(a api) (*vmRow, error) {
 	var out struct {
 		SandboxID string  `json:"sandbox_id"`
 		ExpiresAt float64 `json:"expires_at"`
+		State     string  `json:"state"`
 	}
 	if err := json.Unmarshal(data, &out); err != nil || out.SandboxID == "" {
-		return nil, errors.New("malformed create response")
+		return nil, errors.New("malformed ensure response")
 	}
 	if !validSandboxID(out.SandboxID) {
 		return nil, errors.New("malformed server response: invalid vm id")
+	}
+	// every 201 outcome — created, woken or returned live — hands over a
+	// running machine, so anything else is a door that did not keep the
+	// contract, and the CLI refuses to enter it
+	if out.State != "running" {
+		return nil, errors.New("malformed ensure response: vm not running")
 	}
 	return &vmRow{SandboxID: out.SandboxID, ExpiresAt: out.ExpiresAt, Live: true}, nil
 }
@@ -146,8 +187,21 @@ func vmRun(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	fmt.Fprintln(stderr, "creating vm …")
-	vm, err := createVM(a)
+	// The ensure response carries no outcome word, so the listing decides
+	// what the command tells the Customer: a row the door can answer —
+	// running or asleep — means the ask hands over a machine that is
+	// already theirs, found, not created. Dead rows answer nothing, so the
+	// ask places one and the wording says so.
+	rows, err := listVMs(a)
+	if err != nil {
+		return err
+	}
+	if hasAnswerableVM(rows) {
+		fmt.Fprintln(stderr, "found your vm — entering it")
+	} else {
+		fmt.Fprintln(stderr, "creating vm …")
+	}
+	vm, err := ensureVM(a)
 	if err != nil {
 		return err
 	}

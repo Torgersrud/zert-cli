@@ -62,16 +62,6 @@ func refuseUnsafe(resolved string) error {
 	return nil
 }
 
-// pickLiveVM returns the first live row, or nil.
-func pickLiveVM(rows []vmRow) *vmRow {
-	for i := range rows {
-		if rows[i].Live {
-			return &rows[i]
-		}
-	}
-	return nil
-}
-
 type countWriter struct {
 	w io.Writer
 	n int64
@@ -242,22 +232,29 @@ func uploadRun(arg string, sshArgs []string, stdin io.Reader, stdout, stderr io.
 		me, err = getMe(a)
 		meCh <- err
 	}()
-	rows, err := listVMs(a)
+	which, row, err := askWhichRow(a)
 	if meErr := <-meCh; meErr != nil {
 		return meErr // 401 -> errSessionExpired
 	}
 	if err != nil {
 		return err
 	}
+	// the listing does not name one machine: no copy may silently
+	// stream into whichever row sorted first — the anomaly is refused,
+	// and the refusal's customer rendering is the copy arms' (landing
+	// (c) of spec #30)
+	if which == doorRowSeveral {
+		return errUnusualListing
+	}
 	if err := ensurePubkey(a, me, stderr); err != nil {
 		return err
 	}
 
-	vm := pickLiveVM(rows)
 	created := false
-	if vm == nil {
-		// no live row to stream into: the door's ask decides wake or
-		// place from its own snapshot and tells the story itself
+	vm := row
+	if which == doorRowNone || !vm.Live {
+		// nothing running to stream into: the door's ask decides wake
+		// or place from its own snapshot and tells the story itself
 		vm, _, err = askMachine(a, stderr)
 		if err != nil {
 			return err

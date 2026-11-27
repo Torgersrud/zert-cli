@@ -167,19 +167,26 @@ func extractRun(vmPathArg, dest string, stderr io.Writer) error {
 		me, err = getMe(a)
 		meCh <- err
 	}()
-	rows, err := listVMs(a)
+	which, vm, err := askWhichRow(a)
 	if meErr := <-meCh; meErr != nil {
 		return meErr // 401 -> errSessionExpired
 	}
 	if err != nil {
 		return err
 	}
+	// the listing does not name one machine: no copy may stream out of
+	// whichever row sorted first — the anomaly is refused, and the
+	// refusal's customer rendering is the copy arms' (landing (c) of
+	// spec #30)
+	if which == doorRowSeveral {
+		return errUnusualListing
+	}
 	if err := ensurePubkey(a, me, stderr); err != nil {
 		return err
 	}
-
-	vm := pickLiveVM(rows)
-	if vm == nil {
+	// extract never asks: a machine that is not running answers nothing
+	// here, so the copy-out refuses the same way an empty listing does
+	if which == doorRowNone || !vm.Live {
 		return errNoLiveVM
 	}
 

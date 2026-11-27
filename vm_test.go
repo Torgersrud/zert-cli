@@ -209,6 +209,28 @@ func TestVMTokenExpiredNoCreate(t *testing.T) {
 // askMachine's interface. This suite keeps what is the vm path's own:
 // the entry behavior, the no-ssh spawn guards and the pubkey bootstrap.
 
+// TestVMSleeperHearsTheWakeStory pins the entry path's rendering of the
+// door's woken outcome: a sleeping machine is woken by the ask, and the
+// Customer is told the waking — the pause before the entry opens — never
+// "found", because the machine was asleep, not there to be found. The
+// entry lands in the machine that was asleep.
+func TestVMSleeperHearsTheWakeStory(t *testing.T) {
+	fs := newFakeServer(t)
+	fs.asleep = []string{"vms"}
+	setupHome(t, fs.URL)
+	logPath := fakeSSH(t)
+	var stderr bytes.Buffer
+
+	if err := vmRun(nil, strings.NewReader(""), os.Stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if got := stderr.String(); !strings.Contains(got, "waking yours") || strings.Contains(got, "found your vm") {
+		t.Fatalf("a sleeper must be told the wake, never found, got %q", got)
+	}
+	assertSSHCommonOptions(t, readLog(t, logPath), "vms")
+	assertNoVMDeleted(t, fs, "an entry that wakes a sleeper")
+}
+
 func TestVMNoSpawnOnMaliciousID(t *testing.T) {
 	fs := newFakeServer(t)
 	setupHome(t, fs.URL)

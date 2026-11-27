@@ -125,19 +125,16 @@ func askMachine(a api, story, refusal io.Writer) (*vmRow, doorOutcome, error) {
 // means one was placed. The snapshot can be stale; the id cannot, so the
 // story follows the id.
 func askOutcome(rows []vmRow, id string) doorOutcome {
-	for _, r := range rows {
-		if r.SandboxID != id {
-			continue
-		}
-		switch {
-		case r.Asleep:
-			return doorWoken
-		case answerableRow(r):
-			return doorAnswered
-		}
-		// a dead row under the ask's id answers nothing: the ask placed
-		// past it, so the story says creating
+	// the ask's own id, looked up in the snapshot: the rows that carry it
+	mine := rowsMatching(rows, func(r vmRow) bool { return r.SandboxID == id })
+	switch {
+	case len(rowsMatching(mine, rowIsAsleep)) > 0:
+		return doorWoken
+	case len(rowsMatching(mine, rowIsAnswerable)) > 0:
+		return doorAnswered
 	}
+	// no row carries the ask's id — nothing was listed, or the rows that
+	// were are dead ones the ask placed past — so one was placed
 	return doorPlaced
 }
 
@@ -171,12 +168,7 @@ func askWhichRow(a api) (doorRowAnswer, *vmRow, error) {
 		// reports the state — never "no machine"
 		return doorRowMachine, &rows[0], nil
 	}
-	var answerable []vmRow
-	for _, r := range rows {
-		if answerableRow(r) {
-			answerable = append(answerable, r)
-		}
-	}
+	answerable := rowsMatching(rows, rowIsAnswerable)
 	switch len(answerable) {
 	case 0:
 		return doorRowDead, nil, nil
@@ -187,11 +179,34 @@ func askWhichRow(a api) (doorRowAnswer, *vmRow, error) {
 	}
 }
 
-// answerableRow reports whether a listed row is a machine the door can
-// answer — running, asleep, or being made. Expired rows and state words
-// this build has never seen are dead rows: they answer nothing.
-func answerableRow(r vmRow) bool {
-	return r.Live || r.Asleep || r.Creating
+// The row predicates, as data: one flag test each, read through the
+// one walk below — a sleep-model change edits a predicate here, never
+// a loop somewhere else.
+var (
+	// rowIsLive: a machine already running.
+	rowIsLive = func(r vmRow) bool { return r.Live }
+
+	// rowIsAsleep: a sleeper.
+	rowIsAsleep = func(r vmRow) bool { return r.Asleep }
+
+	// rowIsAnswerable: a machine the door can answer — running, asleep,
+	// or being made. Expired rows and state words this build has never
+	// seen are dead rows: they answer nothing.
+	rowIsAnswerable = func(r vmRow) bool {
+		return rowIsLive(r) || rowIsAsleep(r) || r.Creating
+	}
+)
+
+// rowsMatching is the one walk the row predicates are read through: the
+// rows that satisfy keep, in listing order.
+func rowsMatching(rows []vmRow, keep func(vmRow) bool) []vmRow {
+	var out []vmRow
+	for _, r := range rows {
+		if keep(r) {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // doorRowAnswer is the which-row ask's answer: the machine, none, dead

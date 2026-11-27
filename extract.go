@@ -189,7 +189,7 @@ func extractRun(vmPathArg, dest string, stderr io.Writer) error {
 	// was named: the ask decides wake or place from its own snapshot
 	// and tells the story itself — the same story every other path tells
 	if which != doorRowMachine || !vm.Live {
-		vm, _, err = askMachine(a, stderr)
+		vm, _, err = askMachine(a, stderr, stderr)
 		if err != nil {
 			return err
 		}

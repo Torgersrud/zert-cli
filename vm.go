@@ -80,7 +80,7 @@ func vmRun(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	// the door owns the ask and its outcome story: the machine, which of
 	// the three outcomes happened and the wording all come back from the
 	// one ask
-	vm, _, err := askMachine(a, stderr)
+	vm, _, err := askMachine(a, stderr, stderr)
 	if err != nil {
 		return err
 	}

@@ -23,7 +23,7 @@ import (
 // name's choice, taken here so the cases below assert only what their
 // own writer saw.
 func askQuietly(a api) (*vmRow, doorOutcome, error) {
-	return askMachine(a, io.Discard)
+	return askMachine(a, io.Discard, io.Discard)
 }
 
 // TestDoorAskOutcomes pins the three outcomes once, one per starting
@@ -97,7 +97,7 @@ func TestDoorAskOutcomes(t *testing.T) {
 			fs.expired = tc.expired
 
 			var stderr bytes.Buffer
-			vm, outcome, err := askMachine(api{host: fs.URL}, &stderr)
+			vm, outcome, err := askMachine(api{host: fs.URL}, &stderr, &stderr)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -175,7 +175,7 @@ func TestDoorStoryToleratesTheStaleSnapshot(t *testing.T) {
 			}
 
 			var stderr bytes.Buffer
-			vm, outcome, err := askMachine(api{host: fs.URL}, &stderr)
+			vm, outcome, err := askMachine(api{host: fs.URL}, &stderr, &stderr)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -529,9 +529,9 @@ func TestDoorWhichRowAnswers(t *testing.T) {
 // TestEnsureQuota409ShowsList, moved from the vm suite and freed of its
 // global capture: the quota refusal's whole story — the door's message,
 // the Customer's listing and the way forward — renders through the
-// writer the caller handed the ask, and the refusal comes back as an
-// ordinary error, because the exit code is the main error path's to
-// decide, not a helper's. The 409 backstop is a refusal: one ask, no
+// refusal writer the caller handed the ask, and the refusal comes back
+// as an ordinary error, because the exit code is the main error path's
+// to decide, not a helper's. The 409 backstop is a refusal: one ask, no
 // retry.
 func TestEnsureQuota409ShowsList(t *testing.T) {
 	fs := newFakeServer(t)
@@ -540,7 +540,7 @@ func TestEnsureQuota409ShowsList(t *testing.T) {
 	}
 
 	var stderr bytes.Buffer
-	_, _, err := askMachine(api{host: fs.URL}, &stderr)
+	_, _, err := askMachine(api{host: fs.URL}, &stderr, &stderr)
 	if err == nil || !strings.Contains(err.Error(), "quota reached") {
 		t.Fatalf("want quota-reached error, got %v", err)
 	}

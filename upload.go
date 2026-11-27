@@ -247,7 +247,7 @@ func uploadRun(arg string, sshArgs []string, stdin io.Reader, stdout, stderr io.
 		// nothing running to stream into — no row was named, or the one
 		// named is not running yet: the door's ask decides wake or place
 		// from its own snapshot and tells the story itself
-		vm, _, err = askMachine(a, stderr)
+		vm, _, err = askMachine(a, stderr, stderr)
 		if err != nil {
 			return err
 		}

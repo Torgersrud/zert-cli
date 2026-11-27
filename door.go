@@ -14,12 +14,13 @@ package main
 //     listing by the caller; an id no row names — or an empty listing —
 //     is a placed outcome, so a snapshot that disagrees with the ask
 //     still hears the story the ask did;
-//   - the story: one wording per outcome, told to the writer the caller
-//     hands over once the ask has answered, from what the ask did — the
-//     caller decides whether and where to render, and the stable name
-//     renders nothing;
+//   - the story: one wording per outcome, told to the story writer the
+//     caller hands over once the ask has answered, from what the ask
+//     did — the caller decides whether and where to render, and the
+//     stable name renders nothing;
 //   - the quota story: the 409 refusal's listing and hint render through
-//     the caller's writer, and the refusal comes back as an ordinary
+//     the caller's refusal writer — never silenced, because a refusal
+//     names the way back — and the refusal comes back as an ordinary
 //     error — the module prints to no global and owns no exit policy;
 //   - the which-row ask: "which row is my machine" — answered with the
 //     machine, none, dead rows, or a typed several-machine ambiguity,
@@ -96,21 +97,23 @@ func (o doorOutcome) story() string {
 // once the ask has answered, so a snapshot that went stale between the
 // listing and the ask still hears the story the ask did. The derivation
 // and the wording are the door's; the caller never guesses from a
-// listing. stderr is the caller's writer: the story is told there once
-// the ask has answered, and the quota refusal's listing and hint land
-// there on a 409; a caller that renders nothing — the stable name —
-// passes io.Discard.
-func askMachine(a api, stderr io.Writer) (*vmRow, doorOutcome, error) {
+// listing. story is where the outcome's one wording lands — the caller
+// decides whether and where to render, and the stable name passes
+// io.Discard, because the story may be silenced. refusal is where a
+// refusal's way forward lands: the quota listing and its hint are never
+// silenced — a Customer who hit the quota must see what is theirs and
+// how a slot frees — so every caller hands its real error stream.
+func askMachine(a api, story, refusal io.Writer) (*vmRow, doorOutcome, error) {
 	rows, err := listVMs(a)
 	if err != nil {
 		return nil, 0, err
 	}
-	vm, err := ensureVM(a, stderr)
+	vm, err := ensureVM(a, refusal)
 	if err != nil {
 		return nil, 0, err
 	}
 	outcome := askOutcome(rows, vm.SandboxID)
-	fmt.Fprintln(stderr, outcome.story())
+	fmt.Fprintln(story, outcome.story())
 	return vm, outcome, nil
 }
 
@@ -239,8 +242,10 @@ func (r doorRowAnswer) String() string {
 // is, an Asleep one is woken, and only a Customer with nothing gets one
 // placed. The response says what the machine is, never which of the
 // three happened — the outcome story is askMachine's, derived from the
-// id this ask answered against the snapshot it took.
-func ensureVM(a api, stderr io.Writer) (*vmRow, error) {
+// id this ask answered against the snapshot it took. refusal is the
+// writer the quota story renders through — the caller's real error
+// stream, never silenced.
+func ensureVM(a api, refusal io.Writer) (*vmRow, error) {
 	resp, data, err := a.do("POST", "/v1/vm", map[string]any{})
 	if err != nil {
 		return nil, err
@@ -259,18 +264,18 @@ func ensureVM(a api, stderr io.Writer) (*vmRow, error) {
 	case http.StatusCreated:
 	case http.StatusConflict:
 		// the quota backstop: the whole listing and the way forward
-		// render through the caller's writer, and the refusal comes
-		// back as an ordinary error — the exit code is the main error
-		// path's to decide, never a helper's
-		fmt.Fprintln(stderr, detail(data))
-		fmt.Fprintln(stderr, "your VMs:")
+		// render through the caller's refusal writer, and the refusal
+		// comes back as an ordinary error — the exit code is the main
+		// error path's to decide, never a helper's
+		fmt.Fprintln(refusal, detail(data))
+		fmt.Fprintln(refusal, "your VMs:")
 		if rows, err := listVMs(a); err == nil {
-			printVMs(stderr, rows)
+			printVMs(refusal, rows)
 		}
 		// attach is gone: the way forward is the listing that names the
 		// machines and kill's freed slot — never a command that no
 		// longer exists
-		fmt.Fprintln(stderr, "hint: zert ls lists your vms; "+
+		fmt.Fprintln(refusal, "hint: zert ls lists your vms; "+
 			"zert kill <id> (or zert kill all) frees a slot")
 		return nil, errors.New("quota reached")
 	default:

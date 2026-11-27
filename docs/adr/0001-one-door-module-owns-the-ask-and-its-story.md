@@ -40,7 +40,9 @@ wording per outcome, the quota story, and every row predicate. The module
 takes an `api` value and never calls `requireLogin`: it is not a command,
 and login and exit policy are the runner's business — the stable name
 builds its own `api` from `resolveTunnelTarget` and hands the ask
-`io.Discard`, so silence stays a caller choice, not a door omission.
+`io.Discard` for the outcome story and `os.Stderr` for refusals, so
+silence on success stays a caller choice, not a door omission, and a
+refusal's way forward is never silenced.
 
 The outcome is derived inside the module because the wire contract leaves
 no alternative: the 201 body carries no outcome word (`state` is always

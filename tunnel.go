@@ -238,12 +238,14 @@ func cmdTunnel(args []string) error {
 		// the stable name: one ensure ask answers the Customer's one
 		// machine — placed, woken, or returned live — before the relay
 		// opens, so the byte path dials a machine that is awake. The
-		// door's writer is io.Discard: this path renders nothing —
-		// silence is the caller's choice, not the door's omission — and
-		// the id the ask resolved stays invisible. A refusal passes
-		// through with its message: the Customer learns the wake path
-		// or the reason, never a silent hang.
-		vm, _, err := askMachine(api{host: host, token: token}, io.Discard)
+		// outcome's story is silenced — io.Discard, because this path
+		// renders nothing into the pipe — but a refusal's way forward
+		// is never silenced: the quota listing and its hint reach this
+		// command's own error stream, and the id the ask resolved stays
+		// invisible. A refusal passes through with its message: the
+		// Customer learns the wake path or the reason, never a silent
+		// hang.
+		vm, _, err := askMachine(api{host: host, token: token}, io.Discard, os.Stderr)
 		if err != nil {
 			return err
 		}

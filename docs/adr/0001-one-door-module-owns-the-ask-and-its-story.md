@@ -108,8 +108,8 @@ precede the ask and stay true.
   the command that hits them: they live in `wording.go` as constructors
   (`errSessionExpired`, `errVMExpired`, `errInvalidVMID`,
   `errUnusualListing`, `errSeveralMachinesNoCopy`), while the outcome
-  stories live in `door.go`, one per outcome, told before the ask
-  explains its wait. No table, guard or mapper may restate one.
+  stories live in `door.go`, one per outcome, told after the ask has
+  answered, from what it did. No table, guard or mapper may restate one.
 - `zert status` keeps its unknown-state honesty: a state word this build
   has never seen is admitted and pointed at `zert ls`, never guessed —
   the door reports what the row's flags say.

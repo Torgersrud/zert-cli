@@ -196,10 +196,10 @@ func TestDoorStoryToleratesTheStaleSnapshot(t *testing.T) {
 	}
 }
 
-// TestDoorAsksFromItsOwnSnapshot pins where the outcome comes from: the
-// module takes the listing snapshot itself, before the ask — a caller
-// that never lists anything still gets the true story, and a caller that
-// holds an older listing is not consulted.
+// TestDoorAsksFromItsOwnSnapshot pins that the snapshot is the door's
+// own: the module takes the listing snapshot itself, before the ask —
+// a caller that never lists anything still gets the true story, and a
+// caller that holds an older listing is not consulted.
 func TestDoorAsksFromItsOwnSnapshot(t *testing.T) {
 	fs := newFakeServer(t)
 	fs.asleep = []string{"vms"}

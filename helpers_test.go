@@ -100,13 +100,18 @@ func newFakeServer(t *testing.T) *fakeServer {
 				return
 			}
 			// the default answer is ensure: the customer's machine is
-			// answered when one exists, and one is placed only when
-			// none does
+			// answered when one exists — a live one as it is, an Asleep
+			// one woken to running under its own id, which the next
+			// listing states — and one is placed only when none does
 			fs.mu.Lock()
 			id := ""
 			switch {
 			case len(fs.live) > 0:
 				id = fs.live[0]
+			case len(fs.asleep) > 0:
+				id = fs.asleep[0]
+				fs.asleep = append([]string(nil), fs.asleep[1:]...)
+				fs.live = append(fs.live, id)
 			case len(fs.placed) > 0:
 				id = fs.placed[0]
 			default:

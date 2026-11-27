@@ -136,6 +136,44 @@ func TestVMSSHOptionArgsStillWrap(t *testing.T) {
 	}
 }
 
+// TestVMSSHGrammarAnsweredInOneWalk pins the grammar's combined story: the
+// option table, the bare-token position and the --keep swallow are one
+// scanner's answers from one walk of the customer's ssh args, so a grammar
+// change — long options, a new option-with-value letter — is one edit in
+// that scanner and nowhere else. One invocation needs all three answers at
+// once, and every one is read off the single ssh call it produces: --keep
+// is swallowed with exactly one notice, -L's value is judged an option's
+// value and never a remote command, "--" hands the rest to ssh, and the
+// bare "uptime" starting there stands the tmux wrap down while reaching
+// ssh verbatim before the destination.
+func TestVMSSHGrammarAnsweredInOneWalk(t *testing.T) {
+	fs := newFakeServer(t)
+	setupHome(t, fs.URL)
+	logPath := fakeSSH(t)
+	fakeTTY(t)
+	var stderr bytes.Buffer
+
+	err := vmRun([]string{"--keep", "-L", "8080:localhost:80", "--", "uptime"},
+		strings.NewReader(""), os.Stdout, &stderr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(stderr.String(), "obsolete"); n != 1 {
+		t.Fatalf("the swallow answers saw-keep with one notice, got %d in %q", n, stderr.String())
+	}
+	line := argLines(readLog(t, logPath))[0]
+	if strings.Contains(line, "keep") {
+		t.Fatalf("--keep is swallowed, never forwarded to ssh: %s", line)
+	}
+	if !strings.Contains(line, "-L 8080:localhost:80 uptime user@vm123") ||
+		!strings.HasSuffix(line, "uptime user@vm123") {
+		t.Fatalf("the forwarded args reach ssh verbatim before the destination: %s", line)
+	}
+	if strings.Contains(line, "tmux") || strings.Contains(line, " -t ") {
+		t.Fatalf("the bare token is the user's command, so the wrap stands down: %s", line)
+	}
+}
+
 func TestVMPipedStdinNeverWraps(t *testing.T) {
 	fs := newFakeServer(t)
 	setupHome(t, fs.URL)

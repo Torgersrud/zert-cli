@@ -30,6 +30,20 @@ import (
 	"io"
 )
 
+// countReader counts the bytes that leave the transfer module's pipe — the
+// compressed total a copy path reports to the customer, drained tail
+// included.
+type countReader struct {
+	r io.Reader
+	n int64
+}
+
+func (c *countReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.n += int64(n)
+	return n, err
+}
+
 // transferResult applies the one precedence rule every copy stream reads
 // its failures by: the ssh child's failure is authoritative — its exit
 // code preserved, so zert exits with what ssh exited with — and the

@@ -89,7 +89,7 @@ func detail(data []byte) string {
 func mapped(resp *http.Response, data []byte) error {
 	switch resp.StatusCode {
 	case http.StatusUnauthorized:
-		return &apiError{resp.StatusCode, "session expired — run `zert login`"}
+		return &apiError{resp.StatusCode, errSessionExpired.Error()}
 	case http.StatusTooManyRequests:
 		ra := sanitize(resp.Header.Get("retry-after"))
 		if ra == "" {

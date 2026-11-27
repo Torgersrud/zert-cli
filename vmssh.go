@@ -134,13 +134,17 @@ func warnKeepDeprecated(stderr io.Writer) {
 	fmt.Fprintln(stderr, "--keep is obsolete — vms no longer die on exit")
 }
 
-// interactiveRemoteCmd is the remote command an interactive entry runs in
-// place of a bare login shell: it enters — creating when missing — the one
-// tmux session "zert", so a Detach (detach key, dropped link, dead laptop)
-// only drops the viewer and the next Attach restores the same shell. When
-// the guest has no tmux (a vm from the pre-tmux Template) the guard falls
-// back to a plain login shell, exactly what an unwrapped entry gets.
-const interactiveRemoteCmd = `command -v tmux >/dev/null 2>&1 && exec tmux new -As zert || exec "${SHELL:-sh}" -l`
+// TmuxWrapCmd is the remote command an interactive entry runs in place
+// of a bare login shell: it enters — creating when missing — the one
+// tmux session "zert", so a Detach (detach key, dropped link, dead
+// laptop) only drops the viewer and the next Attach restores the same
+// shell. When the guest has no tmux (a vm from the pre-tmux Template)
+// the guard falls back to a plain login shell, exactly what an
+// unwrapped entry gets. It is exported so the suite that pins the ssh
+// invocation shares this one literal instead of duplicating it
+// byte-for-byte — the wrap is the contract, and a contract is spelled
+// once.
+const TmuxWrapCmd = `command -v tmux >/dev/null 2>&1 && exec tmux new -As zert || exec "${SHELL:-sh}" -l`
 
 // selfExe is the path the ProxyCommand execs: zert running itself as the
 // tunnel child. The bare-name fallback keeps the invocation alive in the
@@ -249,7 +253,7 @@ func enterVM(creds *Credentials, vm *vmRow, scan sshScan, stdin io.Reader, stdou
 	sshCmd.Args = append(sshCmd.Args, scan.args...)
 	sshCmd.Args = append(sshCmd.Args, vmUserDest(vm.SandboxID))
 	if wrapped {
-		sshCmd.Args = append(sshCmd.Args, interactiveRemoteCmd)
+		sshCmd.Args = append(sshCmd.Args, TmuxWrapCmd)
 	}
 	return runWithSignalForwarding(sshCmd)
 }

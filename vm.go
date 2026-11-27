@@ -167,7 +167,7 @@ func vmRun(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	creds, a := requireLogin()
 	me, err := getMe(a)
 	if err != nil {
-		return err // 401 -> "session expired — run `zert login`"
+		return err // 401 -> errSessionExpired
 	}
 	if err := ensurePubkey(a, me, stderr); err != nil {
 		return err

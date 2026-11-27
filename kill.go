@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -56,7 +55,7 @@ func cmdKill(args []string) error {
 	}
 	for _, id := range args {
 		if !validSandboxID(id) {
-			return errors.New("invalid vm id")
+			return errInvalidVMID
 		}
 	}
 	_, a := requireLogin()

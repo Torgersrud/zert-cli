@@ -233,7 +233,7 @@ func uploadRun(arg string, scan sshScan, stdin io.Reader, stdout, stderr io.Writ
 	}()
 	rows, err := listVMs(a)
 	if meErr := <-meCh; meErr != nil {
-		return meErr // 401 -> "session expired — run `zert login`"
+		return meErr // 401 -> errSessionExpired
 	}
 	if err != nil {
 		return err

@@ -72,17 +72,6 @@ func extractRemoteCmd(dir, base string) string {
 	return "tar -czf - -C " + q + " -- '" + base + "'"
 }
 
-type countReader struct {
-	r io.Reader
-	n int64
-}
-
-func (c *countReader) Read(p []byte) (int, error) {
-	n, err := c.r.Read(p)
-	c.n += int64(n)
-	return n, err
-}
-
 // extractTarGz writes a gzip-compressed tar stream into dir (which must
 // exist), returning the number of regular files and the total bytes written.
 // Entries are treated as untrusted (they come from the vm): absolute paths,
@@ -180,7 +169,7 @@ func extractRun(vmPathArg, dest string, stderr io.Writer) error {
 	}()
 	rows, err := listVMs(a)
 	if meErr := <-meCh; meErr != nil {
-		return meErr // 401 -> "session expired — run `zert login`"
+		return meErr // 401 -> errSessionExpired
 	}
 	if err != nil {
 		return err
@@ -209,41 +198,26 @@ func extractRun(vmPathArg, dest string, stderr io.Writer) error {
 	remote := vmUserDest(vm.SandboxID)
 	fmt.Fprintf(stderr, "extracting %s:%s → %s …\n", remote, vmPathArg, absDest)
 
-	pr, pw := io.Pipe()
-	cr := &countReader{r: pr}
-	extractDone := make(chan error, 1)
+	// what is genuinely extract's: the name validated above, the remote
+	// command it spells, and the unpack codec with its wording — the pipe,
+	// the spawn-failure release and the failure precedence belong to the
+	// transfer module
 	var files int
 	var raw int64
-	go func() {
-		f, n, err := extractTarGz(absDest, cr)
-		if err == nil {
-			// tar stops reading at the end-of-archive marker; drain the
-			// tail so ssh's stdout copy can finish instead of stalling
-			_, err = io.Copy(io.Discard, cr)
-		}
-		if err != nil {
-			// abort: close the read end so a still-writing ssh sees EPIPE
-			// and exec's stdout copy unblocks Wait
-			_ = pr.CloseWithError(err)
-		}
-		files, raw = f, n
-		extractDone <- err
-	}()
-	// the untar runs concurrently with the transfer: it simply blocks on the
-	// pipe until execInVM's ssh child starts writing
-	sshErr := execInVM(creds, vm, extractRemoteCmd(dir, base), nil, pw, stderr)
-	_ = pw.Close() // child is gone: hand the untar reader its EOF
-	tarErr := <-extractDone
-	if sshErr != nil {
-		// ssh's exit code is the authoritative failure; a downstream stream
-		// error is usually just the fallout of the truncated transfer
-		return sshErr
-	}
-	if tarErr != nil && !errors.Is(tarErr, io.ErrClosedPipe) {
-		return fmt.Errorf("extracting %s: %w", vmPathArg, tarErr)
+	compressed, err := transferFromVM(creds, vm, extractRemoteCmd(dir, base), stderr,
+		func(r io.Reader) error {
+			f, n, tarErr := extractTarGz(absDest, r)
+			files, raw = f, n
+			return tarErr
+		},
+		func(e error) error {
+			return fmt.Errorf("extracting %s: %w", vmPathArg, e)
+		})
+	if err != nil {
+		return err
 	}
 	fmt.Fprintf(stderr, "extracted %d files (%s → %s compressed)\n",
-		files, humanBytes(raw), humanBytes(cr.n))
+		files, humanBytes(raw), humanBytes(compressed))
 	return nil
 }
 

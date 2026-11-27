@@ -112,7 +112,7 @@ func TestUploadEntryRunsTmuxCopyStreamNever(t *testing.T) {
 		!strings.Contains(lines[0], uploadRemoteCmd) {
 		t.Fatalf("the copy stream must never see tmux or a forced -t: %s", lines[0])
 	}
-	if !strings.Contains(lines[1], "user@vm123 "+tmuxWrapCmd) {
+	if !strings.Contains(lines[1], "user@vm123 "+TmuxWrapCmd) {
 		t.Fatalf("the post-copy entry must run inside the tmux session: %s", lines[1])
 	}
 }

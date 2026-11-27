@@ -80,7 +80,7 @@ func TestVMInteractiveEntryRunsTmuxWrap(t *testing.T) {
 	// the wrap is the remote command — it follows the destination — and it
 	// comes with -t, because ssh only gives an explicit command a tty once
 	// a command is present, and tmux needs one
-	if !strings.Contains(line, "-t user@vm123 "+tmuxWrapCmd) || !strings.HasSuffix(line, tmuxWrapCmd) {
+	if !strings.Contains(line, "-t user@vm123 "+TmuxWrapCmd) || !strings.HasSuffix(line, TmuxWrapCmd) {
 		t.Fatalf("tmux wrap not the remote command of the interactive ssh: %s", line)
 	}
 }
@@ -132,7 +132,7 @@ func TestVMSSHOptionArgsStillWrap(t *testing.T) {
 	line := argLines(readLog(t, logPath))[0]
 	// an option's value is not a remote command: port forwarding with no
 	// command still lands in the tmux session
-	if !strings.Contains(line, "-L 8080:localhost:80 user@vm123 "+tmuxWrapCmd) {
+	if !strings.Contains(line, "-L 8080:localhost:80 user@vm123 "+TmuxWrapCmd) {
 		t.Fatalf("option-only ssh args lost the tmux wrap: %s", line)
 	}
 }

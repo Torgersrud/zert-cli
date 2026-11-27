@@ -22,6 +22,16 @@ func usage() {
 usage:
   zert login [--host URL] [--insecure]
                                  authenticate and store credentials
+  zert login --stdin [--host URL] [--insecure]
+                                 non-interactive login for GUIs: the
+                                 email then the password arrive as
+                                 two lines on stdin — never argv, so
+                                 nothing shows in process listings; the
+                                 outcome is one machine-readable word on
+                                 stdout (ok, bad-credentials,
+                                 unprovisioned, rate-limited,
+                                 error: <reason>) with the matching
+                                 exit status 0-4
   zert logout                    delete stored credentials
   zert me                        show profile, quota, pubkey
   zert ls                        list your VMs and their time left

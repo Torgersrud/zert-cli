@@ -23,3 +23,12 @@ is answered as it is, an Asleep one is woken, and only a customer with nothing
 gets one placed. Asking twice is the same question and answers the same
 machine — which is what makes the CLI's one `502` retry safe.
 _Avoid_: create for the ask (a create is only one of ensure's three outcomes)
+
+**Stable name**:
+The one word an ssh configuration can carry forever: `zert tunnel me`, the
+hidden command's sentinel. Every connection through it resolves, from the
+caller's credentials, to that customer's one machine — one ensure ask, then
+the relay dials the concrete id that ask answered, so the id exists only
+inside that ask and the tunnel URL and nothing the Customer types, sees or
+configures ever carries one.
+_Avoid_: hostname router, alias

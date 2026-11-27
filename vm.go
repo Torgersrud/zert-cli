@@ -115,7 +115,10 @@ func ensureVM(a api) (*vmRow, error) {
 		if rows, err := listVMs(a); err == nil {
 			printVMs(rows)
 		}
-		fmt.Fprintln(os.Stderr, "hint: zert attach <id> attaches to a live vm; "+
+		// attach is gone: the way forward is the listing that names the
+		// machines and kill's freed slot — never a command that no longer
+		// exists
+		fmt.Fprintln(os.Stderr, "hint: zert ls lists your vms; "+
 			"zert kill <id> (or zert kill all) frees a slot")
 		return nil, &exitError{1, errors.New("quota reached")}
 	default:

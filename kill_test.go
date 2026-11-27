@@ -20,9 +20,22 @@ func TestKillMultipleRejectsAnyBadID(t *testing.T) {
 	}
 }
 
-func TestKillNoArgs(t *testing.T) {
-	if err := cmdKill(nil); err == nil || !strings.Contains(err.Error(), "usage") {
-		t.Fatalf("want usage error, got %v", err)
+// bare kill takes down every machine the listing answers — running or
+// asleep — the same ask as `zert kill all`
+func TestKillBareKillsTheMachine(t *testing.T) {
+	fs := newFakeServer(t)
+	setupHome(t, fs.URL)
+	fs.mu.Lock()
+	fs.live = []string{"vm1", "vm2"}
+	fs.asleep = []string{"vm3"}
+	fs.mu.Unlock()
+
+	if err := cmdKill(nil); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"vm1", "vm2", "vm3"}
+	if got := deletedIDs(t, fs); strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("deleted %v, want %v", got, want)
 	}
 }
 

@@ -11,6 +11,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
@@ -146,5 +147,188 @@ func TestDoorAsksFromItsOwnSnapshot(t *testing.T) {
 	fs.mu.Unlock()
 	if len(asleep) != 0 || len(live) != 1 || live[0] != "vms" {
 		t.Fatalf("the ask must wake the sleeper, live=%v asleep=%v", live, asleep)
+	}
+}
+
+// TestEnsureTwiceAnswersSameMachine, moved from the vm suite to the seam
+// that owns the contract: POST /v1/vm is the ensure ask, so a second ask
+// must answer the machine the first one placed — never place a second —
+// and the outcome story must tell which of the two happened. The fake
+// places a machine only when the account has none, so "the second ask
+// placed nothing" is read off fs.placed.
+func TestEnsureTwiceAnswersSameMachine(t *testing.T) {
+	fs := newFakeServer(t)
+
+	first, outcome, err := askQuietly(api{host: fs.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, outcome2, err := askQuietly(api{host: fs.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if first.SandboxID != second.SandboxID || first.SandboxID != "vm123" {
+		t.Fatalf("both asks must answer the same machine, got %s then %s", first.SandboxID, second.SandboxID)
+	}
+	if outcome != doorPlaced || outcome2 != doorAnswered {
+		t.Fatalf("the story must say placed then found, got %v then %v", outcome, outcome2)
+	}
+	asks, placed := fs.ensureCounts()
+	if len(placed) != 1 || placed[0] != "vm123" {
+		t.Fatalf("the second ask must place nothing, placements: %v", placed)
+	}
+	if asks != 2 {
+		t.Fatalf("each ask must reach the door, want 2 POSTs, got %d", asks)
+	}
+}
+
+// The retry shape, moved from the vm suite and pinned here once: exactly
+// one retry, and only on a 502 — a refusal is an answer, never retried,
+// and it places nothing.
+
+func TestEnsure502RetriesOnce(t *testing.T) {
+	fs := newFakeServer(t)
+	fs.create = func(w http.ResponseWriter, tries int) {
+		if tries == 1 {
+			http.Error(w, `{"detail":"failed to bootstrap VM, try again"}`, 502)
+			return
+		}
+		w.WriteHeader(201)
+		json.NewEncoder(w).Encode(map[string]any{"sandbox_id": "vm123", "expires_at": json.Number("9999999999"), "state": "running"})
+	}
+
+	vm, _, err := askQuietly(api{host: fs.URL})
+	if err != nil {
+		t.Fatalf("502 retry should succeed, got %v", err)
+	}
+	if vm.SandboxID != "vm123" {
+		t.Fatalf("the retried ask must answer the machine, got %s", vm.SandboxID)
+	}
+	if asks, _ := fs.ensureCounts(); asks != 2 {
+		t.Fatalf("the retry is one more ask: want 2 POSTs, got %d", asks)
+	}
+}
+
+// TestEnsure502RetryPlacesOneMachine routes the headline through the
+// retry itself: an ask that dies on the door's far side (502) places
+// nothing, the retry places the one machine, and a later ask answers
+// that same machine without placing anything — the retried bad-gateway
+// answer returns the Customer's one machine, never a second.
+func TestEnsure502RetryPlacesOneMachine(t *testing.T) {
+	fs := newFakeServer(t)
+	fs.create = func(w http.ResponseWriter, tries int) {
+		fs.mu.Lock()
+		placed := len(fs.placed) > 0
+		fs.mu.Unlock()
+		if !placed {
+			if tries == 1 {
+				// the ask reached the door and died past it: the
+				// bootstrap failed, so nothing was placed
+				http.Error(w, `{"detail":"failed to bootstrap VM, try again"}`, 502)
+				return
+			}
+			fs.mu.Lock()
+			fs.placed = append(fs.placed, "vm123")
+			fs.mu.Unlock()
+		}
+		w.WriteHeader(201)
+		json.NewEncoder(w).Encode(map[string]any{
+			"sandbox_id": "vm123", "expires_at": json.Number("9999999999"),
+			"state": "running",
+		})
+	}
+
+	if _, _, err := askQuietly(api{host: fs.URL}); err != nil {
+		t.Fatalf("502 retry should succeed, got %v", err)
+	}
+	if _, _, err := askQuietly(api{host: fs.URL}); err != nil {
+		t.Fatal(err)
+	}
+	asks, placed := fs.ensureCounts()
+	if len(placed) != 1 || placed[0] != "vm123" {
+		t.Fatalf("retry places the one machine, later asks place nothing: %v", placed)
+	}
+	if asks != 3 {
+		t.Fatalf("want 3 asks (502, retry, later ask), got %d", asks)
+	}
+}
+
+// TestEnsureRefusalNotRetried pins that a refusal is final: the ensure
+// refusals (400 no/invalid pubkey, 429 rate-limited, 503 wake/arm failed)
+// place nothing and are never retried — only the bad gateway asks again.
+func TestEnsureRefusalNotRetried(t *testing.T) {
+	for _, code := range []int{400, 429, 503} {
+		fs := newFakeServer(t)
+		fs.create = func(w http.ResponseWriter, _ int) {
+			http.Error(w, `{"detail":"refused"}`, code)
+		}
+
+		_, _, err := askQuietly(api{host: fs.URL})
+		if err == nil {
+			t.Fatalf("%d: want the refusal as an error", code)
+		}
+		asks, placed := fs.ensureCounts()
+		if asks != 1 {
+			t.Fatalf("%d: a refusal must not be retried, got %d asks", code, asks)
+		}
+		if len(placed) != 0 {
+			t.Fatalf("%d: a refusal places nothing, got %v", code, placed)
+		}
+	}
+}
+
+// TestEnsure502RetriedOnceOnly pins the retry's shape: the 502 keeps its
+// trigger and its single attempt — a door that answers 502 twice gets two
+// asks, never a third.
+func TestEnsure502RetriedOnceOnly(t *testing.T) {
+	fs := newFakeServer(t)
+	fs.create = func(w http.ResponseWriter, _ int) {
+		http.Error(w, `{"detail":"failed to bootstrap VM, try again"}`, 502)
+	}
+
+	_, _, err := askQuietly(api{host: fs.URL})
+	if err == nil || !strings.Contains(err.Error(), "bootstrap") {
+		t.Fatalf("want the 502 word after one retry, got %v", err)
+	}
+	if asks, _ := fs.ensureCounts(); asks != 2 {
+		t.Fatalf("the retry is one attempt: want 2 asks, got %d", asks)
+	}
+}
+
+// TestEnsureRequiresRunningState pins the response contract's one promise
+// about the machine: every 201 hands over a running machine, whatever
+// outcome got it there. A door that answers any other state word is not
+// obeying the ensure contract, and the CLI refuses to hand the machine
+// over.
+func TestEnsureRequiresRunningState(t *testing.T) {
+	fs := newFakeServer(t)
+	fs.create = func(w http.ResponseWriter, _ int) {
+		w.WriteHeader(201)
+		json.NewEncoder(w).Encode(map[string]any{
+			"sandbox_id": "vm123", "expires_at": json.Number("9999999999"),
+			"state": "asleep",
+		})
+	}
+
+	_, _, err := askQuietly(api{host: fs.URL})
+	if err == nil || !strings.Contains(err.Error(), "not running") {
+		t.Fatalf("want a not-running refusal, got %v", err)
+	}
+}
+
+// TestEnsureRejectsMaliciousID pins the id guard at the door: the id the
+// response carries is refused unless it passes validSandboxID, before any
+// path can put it into an ssh argv. (The no-ssh half of the old vm-suite
+// pin stays there: TestVMNoSpawnOnMaliciousID.)
+func TestEnsureRejectsMaliciousID(t *testing.T) {
+	fs := newFakeServer(t)
+	fs.create = func(w http.ResponseWriter, _ int) {
+		w.WriteHeader(201)
+		io.WriteString(w, `{"sandbox_id":"x; touch /tmp/pwned","expires_at":9999999999,"state":"running"}`)
+	}
+	_, _, err := askQuietly(api{host: fs.URL})
+	if err == nil || !strings.Contains(err.Error(), "invalid vm id") {
+		t.Fatalf("want invalid-vm-id error, got %v", err)
 	}
 }

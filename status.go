@@ -19,6 +19,24 @@ func cmdStatus([]string) error {
 		fmt.Println("no machine yet — run `zert vm` to make one")
 		return nil
 	}
+	// the Customer has one machine, so several rows are a server-side
+	// anomaly this command must not paper over by picking one: when
+	// exactly one row is a machine the door can answer — running, asleep,
+	// or being made — that row is the machine; any other several-row
+	// listing is admitted as unusual and pointed at the technical one.
+	if len(rows) > 1 {
+		var answerable []vmRow
+		for _, r := range rows {
+			if r.Live || r.Asleep || r.Creating {
+				answerable = append(answerable, r)
+			}
+		}
+		if len(answerable) != 1 {
+			fmt.Println("your machine listing is unusual — `zert ls` shows what the server says")
+			return nil
+		}
+		rows = answerable
+	}
 	r := rows[0] // the Customer's one machine: one live-or-asleep machine per customer
 	switch {
 	case r.Creating:

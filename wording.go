@@ -3,8 +3,8 @@ package main
 import "errors"
 
 // The cross-command wordings: every customer-facing truth two paths share
-// is spelled once here, as a constructor — the pattern errNoLiveVM
-// (extract.go) already proves. A wording that names the way back is a
+// is spelled once here, as a constructor — the pattern the constructors
+// below prove. A wording that names the way back is a
 // rule about the product, not about the command that happens to hit it,
 // so no table, guard or mapper may restate one.
 

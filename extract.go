@@ -12,10 +12,6 @@ import (
 	"strings"
 )
 
-// errNoLiveVM is the house wording for a flow that needs a running vm and
-// found none; the extract path points at the commands that make one.
-var errNoLiveVM = errors.New("no live vm — start one with `zert vm` or `zert <path>` first")
-
 // splitRemotePath splits a vm path into the directory to cd into and the
 // basename to archive, both suitable for the remote tar command. A path with
 // no slash (or a ~/ prefix) resolves against the vm user's home.
@@ -150,7 +146,10 @@ func extractTarGz(dir string, r io.Reader) (files int, raw int64, err error) {
 // uploadRun: the vm streams a tar.gz of vmPath over ssh stdout and it is
 // unpacked into dest. Nothing of the transfer goes to the CLI's stdout — the
 // bytes land in the unpacked files — so there is no stdout writer here.
-// It never creates, enters or kills a vm — the vm must already be live.
+// The way out asks the door with the same story as every other path: a
+// machine that is not running is woken or placed by the one ensure ask
+// before the copy dials, and the story is the ask's, derived from its own
+// snapshot. It never enters or kills a vm.
 func extractRun(vmPathArg, dest string, stderr io.Writer) error {
 	// parse before any network: a bad name must cost zero requests
 	dir, base, err := splitRemotePath(vmPathArg)
@@ -184,10 +183,14 @@ func extractRun(vmPathArg, dest string, stderr io.Writer) error {
 	if err := ensurePubkey(a, me, stderr); err != nil {
 		return err
 	}
-	// extract never asks: a machine that is not running answers nothing
-	// here, so the copy-out refuses the same way an empty listing does
+	// the row the door named is not a machine running yet: the ask
+	// decides wake or place from its own snapshot and tells the story
+	// itself — the same story every other path tells
 	if which == doorRowNone || !vm.Live {
-		return errNoLiveVM
+		vm, _, err = askMachine(a, stderr)
+		if err != nil {
+			return err
+		}
 	}
 
 	if dest == "" {

@@ -190,6 +190,39 @@ func TestExtractNoLiveVM(t *testing.T) {
 	assertNoVMDeleted(t, fs, "an extract that places a machine")
 }
 
+// TestExtractWakesSleepingVM pins the waking half of copy-out's story,
+// mirroring the copy-in suite: a machine that fell asleep is woken by
+// the one ensure ask before the copy dials, so the stream comes out of
+// the machine that was asleep — never out of a fresh one placed past it
+// — and the story is the ask's outcome, never a guess at the row.
+func TestExtractWakesSleepingVM(t *testing.T) {
+	fs := newFakeServer(t)
+	fs.asleep = []string{"vms"}
+	setupHome(t, fs.URL)
+	tarPath := makeTarGz(t, tarEntry{name: "out/a.txt", body: "hello", mode: 0644})
+	t.Setenv("FAKE_SSH_STDOUT", tarPath)
+	logPath := fakeSSHStreamingStdout(t)
+	var stderr bytes.Buffer
+	dest := t.TempDir()
+
+	if err := extractRun("~/out", dest, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if got := stderr.String(); !strings.Contains(got, "waking yours") || strings.Contains(got, "creating one") {
+		t.Fatalf("a sleeper must be announced as woken, never as created, got %q", got)
+	}
+	asks, placed := fs.ensureCounts()
+	if asks != 1 || len(placed) != 0 {
+		t.Fatalf("one ask must wake the sleeper and place nothing, got %d asks, placed %v", asks, placed)
+	}
+	logged := readLog(t, logPath)
+	assertSSHCommonOptions(t, logged, "vms")
+	if n := len(argLines(logged)); n != 1 {
+		t.Fatalf("extract never enters: exactly one ssh call, got %d: %s", n, logged)
+	}
+	assertNoVMDeleted(t, fs, "an extract that wakes a sleeper")
+}
+
 // TestExtractSeveralRowsRefusesInsteadOfPicking pins the several-row
 // anomaly's copy-out half: a listing that does not name one machine is
 // refused before anything streams — no ssh spawn, no ensure ask — never

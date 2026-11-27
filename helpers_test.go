@@ -420,11 +420,6 @@ func assertNoSSHSpawned(t *testing.T, logPath, why string) {
 
 // --- misc shared fixtures ------------------------------------------------
 
-// The tmux wrap command is pinned through the production constant
-// TmuxWrapCmd (vmssh.go): the ssh-invocation tests below assert the wrap
-// is carried, and the literal itself lives once, exported, instead of a
-// byte-for-byte duplicate here.
-
 // fakeTTY makes stdinIsInteractive report a terminal — a test binary's
 // stdin never is one — so the interactive paths can pin their tmux wrap.
 func fakeTTY(t *testing.T) {

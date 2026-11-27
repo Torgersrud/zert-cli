@@ -30,7 +30,7 @@ func cmdStatus([]string) error {
 		fmt.Println(errUnusualListing.Error())
 		return nil
 	}
-	r := *row // the Customer's one machine: one live-or-asleep machine per customer
+	r := *row // the Customer's one machine, whatever state word its row carries
 	switch {
 	case r.Creating:
 		fmt.Println("your machine is being created — give it a moment, then ask again")

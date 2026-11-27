@@ -317,6 +317,23 @@ func TestAttachIDWithRemoteCommandStaysCommand(t *testing.T) {
 	}
 }
 
+// TestUsageAttachTellsTheWakeTruth pins the escape hatch's blurb where the
+// Customer reads it: usage must say a sleeping machine wakes on attach and
+// must not claim attach needs a running VM — the several-demanding case is
+// the running one alone.
+func TestUsageAttachTellsTheWakeTruth(t *testing.T) {
+	out := captureStderr(t, usage)
+	if !strings.Contains(out, "a sleeping one wakes") {
+		t.Fatalf("usage must say attach wakes a sleeper, got %q", out)
+	}
+	if strings.Contains(out, "attach to a running VM") {
+		t.Fatalf("usage must not claim attach needs a running VM, got %q", out)
+	}
+	if !strings.Contains(out, "with several\n                                 running it is required") {
+		t.Fatalf("usage's name-one rule must be the running case, got %q", out)
+	}
+}
+
 func TestSplitAttachArgs(t *testing.T) {
 	for _, tc := range []struct {
 		args []string

@@ -45,26 +45,31 @@ usage:
   zert ls                        the technical listing: raw ids with state
                                  words (running, asleep, creating) and
                                  time left
-  zert vm [ssh args..]           create a VM and ssh into it — leaving the
-                                 session never kills the VM; only zert kill
-                                 ends it — an idle machine falls asleep
-                                 and your next connect wakes it
+  zert vm [ssh args..]           your VM and an ssh session into it — a
+                                 machine is placed only if you have none,
+                                 a sleeping one wakes; leaving the
+                                 session never kills the VM — only zert
+                                 kill ends it — an idle machine falls
+                                 asleep and your next connect wakes it
   zert attach [id] [ssh args..]
-                                 attach to a running VM — the same shell
-                                 comes back (with one live VM the id is
-                                 optional, with several it is required,
-                                 with none it says so); leaving this
-                                 session never kills the VM either
+                                 attach to your VM — the same shell comes
+                                 back, and the machine need not be
+                                 running: a sleeping one wakes (with one
+                                 VM the id is optional, with several
+                                 running it is required, with none it
+                                 says so); leaving this session never
+                                 kills the VM either
   zert kill <id>..|all           terminate VM(s)
   zert extract <vm-path> [dir]   copy a file/dir from your live vm
                                  into [dir] (default: current dir); vm
                                  paths resolve against the vm user's home
   zert <path> [ssh args..]
                                  copy a local dir/file into your vm
-                                 (creates one if none is running, and
-                                 sshs into it after the copy; the vm
-                                 stays up when you leave — extra ssh
-                                 args also enter an already-running vm);
+                                 (wakes a sleeping one, places a new one
+                                 if you have none, and sshs into it after
+                                 the copy; the vm stays up when you
+                                 leave — extra ssh args also enter an
+                                 already-running vm);
                                  names may only use letters, digits and
                                  ._@%+=:,- — rename or archive the rest;
                                  the copy is streamed as one compressed

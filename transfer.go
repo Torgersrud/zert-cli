@@ -6,8 +6,8 @@ package main
 // this module gets, once:
 //
 //   - the pipe: the codec runs concurrently with the ssh child over a pipe
-//     whose ends this module alone opens, counts, aborts and closes — a
-//     caller never touches one;
+//     whose ends this module alone opens, counts, drains, aborts and
+//     closes — a caller never touches one;
 //   - the spawn-failure release: a child that never started is gone the
 //     same way a finished one is, the closed pipe handing the codec its
 //     end instead of a hang;

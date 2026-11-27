@@ -431,6 +431,12 @@ func TestTunnelMeEnsuresOnceAndDialsThatMachine(t *testing.T) {
 	if out != "hello-through-the-relay" {
 		t.Fatalf("the relay's byte path must be unchanged, got %q", out)
 	}
+	// silence plus one ask: the stable name renders nothing on success —
+	// the story is the door's to tell and this caller chose not to, so
+	// the ssh stream and the Customer's terminal stay untouched
+	if errOut != "" {
+		t.Fatalf("the stable name renders nothing into the pipe, stderr said: %q", errOut)
+	}
 	if strings.Contains(errOut, "zzz9") {
 		t.Fatalf("the id must stay invisible to the Customer, stderr said: %q", errOut)
 	}
@@ -444,7 +450,7 @@ func TestTunnelMePlacesTheFirstMachine(t *testing.T) {
 	fs := newFakeServer(t) // nothing live: ensure places the one machine
 	setupHome(t, fs.URL)
 
-	out, _, err := driveTunnel(t, []string{"me"}, "first-connect")
+	out, errOut, err := driveTunnel(t, []string{"me"}, "first-connect")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -460,6 +466,11 @@ func TestTunnelMePlacesTheFirstMachine(t *testing.T) {
 	}
 	if out != "first-connect" {
 		t.Fatalf("the relay's byte path must be unchanged, got %q", out)
+	}
+	// a placed machine hears the same silence: setup ends before the
+	// Customer notices it began
+	if errOut != "" {
+		t.Fatalf("the stable name renders nothing into the pipe, stderr said: %q", errOut)
 	}
 }
 

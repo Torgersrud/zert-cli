@@ -12,6 +12,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -330,5 +331,50 @@ func TestEnsureRejectsMaliciousID(t *testing.T) {
 	_, _, err := askQuietly(api{host: fs.URL})
 	if err == nil || !strings.Contains(err.Error(), "invalid vm id") {
 		t.Fatalf("want invalid-vm-id error, got %v", err)
+	}
+}
+
+// TestEnsureQuota409ShowsList, moved from the vm suite and freed of its
+// global capture: the quota refusal's whole story — the door's message,
+// the Customer's listing and the way forward — renders through the
+// writer the caller handed the ask, and the refusal comes back as an
+// ordinary error, because the exit code is the main error path's to
+// decide, not a helper's. The 409 backstop is a refusal: one ask, no
+// retry.
+func TestEnsureQuota409ShowsList(t *testing.T) {
+	fs := newFakeServer(t)
+	fs.create = func(w http.ResponseWriter, _ int) {
+		http.Error(w, `{"detail":"quota reached (1 live VM)"}`, 409)
+	}
+
+	var stderr bytes.Buffer
+	_, _, err := askMachine(api{host: fs.URL}, &stderr)
+	if err == nil || !strings.Contains(err.Error(), "quota reached") {
+		t.Fatalf("want quota-reached error, got %v", err)
+	}
+	var ee *exitError
+	if errors.As(err, &ee) {
+		t.Fatalf("the door owns no exit policy: the quota refusal must be an ordinary error, got %T", err)
+	}
+	story := stderr.String()
+	if !strings.Contains(story, "quota reached (1 live VM)") {
+		t.Fatalf("the door's refusal message must render to the caller's writer, got %q", story)
+	}
+	if !strings.Contains(story, "your VMs:") || !strings.Contains(story, "LIVE") {
+		t.Fatalf("the listing must render to the caller's writer, got %q", story)
+	}
+	// attach is gone, so the hint must not teach it — and the way forward
+	// must still be stated: the listing names the machines, kill frees a slot
+	if strings.Contains(story, "attach") {
+		t.Fatalf("quota-409 hint must not teach the removed attach command, got %q", story)
+	}
+	if !strings.Contains(story, "zert ls") {
+		t.Fatalf("quota-409 hint must state a way forward that is not attach, got %q", story)
+	}
+	if !strings.Contains(story, "zert kill <id>") {
+		t.Fatalf("quota-409 hint must still offer zert kill, got %q", story)
+	}
+	if asks, _ := fs.ensureCounts(); asks != 1 {
+		t.Fatalf("a 409 refusal must not be retried, got %d asks", asks)
 	}
 }

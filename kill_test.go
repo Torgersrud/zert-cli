@@ -20,9 +20,33 @@ func TestKillMultipleRejectsAnyBadID(t *testing.T) {
 	}
 }
 
-func TestKillNoArgs(t *testing.T) {
-	if err := cmdKill(nil); err == nil || !strings.Contains(err.Error(), "usage") {
-		t.Fatalf("want usage error, got %v", err)
+// TestKillEmptyArgumentIsUsage restores the edge the bare-kill change
+// lost: an empty-string argument — the shell's `zert kill ""` — is not
+// an id to validate, it is the usage error it always was, so the
+// Customer learns the form instead of a guard's wording.
+func TestKillEmptyArgumentIsUsage(t *testing.T) {
+	// the judgement runs before requireLogin, so no creds are needed here
+	if err := cmdKill([]string{""}); err == nil || !strings.Contains(err.Error(), "usage") {
+		t.Fatalf("an empty argument must be the usage error, not an id to validate, got %v", err)
+	}
+}
+
+// bare kill takes down every machine the listing answers — running or
+// asleep — the same ask as `zert kill all`
+func TestKillBareKillsTheMachine(t *testing.T) {
+	fs := newFakeServer(t)
+	setupHome(t, fs.URL)
+	fs.mu.Lock()
+	fs.live = []string{"vm1", "vm2"}
+	fs.asleep = []string{"vm3"}
+	fs.mu.Unlock()
+
+	if err := cmdKill(nil); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"vm1", "vm2", "vm3"}
+	if got := deletedIDs(t, fs); strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("deleted %v, want %v", got, want)
 	}
 }
 

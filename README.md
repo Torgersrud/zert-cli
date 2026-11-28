@@ -33,14 +33,13 @@ Prebuilt binaries for every platform are on the
 ```sh
 zert login
 zert vm                         # create a VM and ssh into it (leaving never kills it)
-zert attach                     # back into your VM (same shell, id optional;
-                                 # a sleeping one wakes)
 zert ./myproject                # run a zert vm with your repo
 zert extract ~/report.pdf       # copy a file/dir out of your live vm
 zert status                     # your machine in plain words: running with
                                  # its time left, asleep, or none yet
 zert ls                         # the technical listing: raw ids with state
                                  # words and time left
+zert kill                      # terminate your VM(s) — same as kill all
 zert kill <id>                  # terminate a VM
 zert kill all                   # terminate all your VMs
 zert --version
@@ -58,25 +57,20 @@ none says that and points at `zert vm`. A state this version of the CLI
 has never seen is admitted, not guessed at. Raw ids appear in `zert ls`
 and nowhere else on the customer-facing surface.
 
-`zert attach [id]` is how you come back to your VM: with exactly one
-machine (running or asleep) the id is optional, with several running you
-have to name one (`zert ls` lists them), and with none it points you at
-`zert vm`. A machine that fell asleep wakes when you attach — a few
-seconds' pause, then the same shell, with everything as you left it. An attach to an id
-that is gone or not yours says so: "no such vm <id> — zert ls lists
-your vms" — and that refusal can be the reason a machine exists: waking a
-named sleeper goes through the door's one ensure ask, which places a fresh
-machine when the sleeper turns out genuinely gone (the door has no
-wake-by-id that places nothing), so `zert status` may show a machine the
-refusal minted. Leaving an attached session never kills the VM either — only
+Coming back to your VM is the same as getting in: `zert vm`, `zert <path>`,
+or the stable name in your ssh config (`ssh zert`). The machine need not be
+running — one that fell asleep wakes on your next connect, a few seconds'
+pause, then the same shell, with everything as you left it. Raw ids appear
+in `zert ls` and nowhere on the way in: entry never names an id, so there
+is no command to enter a machine by id. Leaving never kills the VM — only
 `zert kill` ends it: an idle machine falls asleep, and your next connect
 wakes it.
 
-Every interactive entry (`zert vm`, `zert attach`, and the entry after a
+Every interactive entry (`zert vm` and the entry after a
 copy) runs inside one tmux session in the VM, named `zert`. That is what
 makes a Detach restorable: your scrollback, running programs and background
-jobs keep running, and the next attach lands back in the same shell. Two
-attaches show the same screen (they mirror the session). To leave on purpose
+jobs keep running, and the next entry lands back in the same shell. Two
+entries show the same screen (they mirror the session). To leave on purpose
 without exiting your shell, use tmux's detach key `Ctrl-b d`. A VM from the
 old, pre-tmux Template falls back to a plain shell: you still get in, only
 without the session restore. Passing your own remote command to ssh runs it
@@ -97,8 +91,28 @@ VM after the copy. Entering — and leaving — never ends a VM either way;
 `zert kill` is the only way one dies — an idle machine falls asleep
 instead. The old
 `--keep` flag is still accepted on every entry command (`zert vm`,
-`zert attach`, `zert <path>`) for existing scripts; it prints
+`zert <path>`) for existing scripts; it prints
 `--keep is obsolete — vms no longer die on exit` and changes nothing.
+
+## Account commands
+
+The bare `zert` answer names the commands that matter; these are the rest:
+
+- `zert login [--host URL] [--insecure]` — authenticate and store
+  credentials.
+- `zert login --stdin [--host URL] [--insecure]` — non-interactive login
+  for GUIs: the email then the password arrive as two lines on stdin —
+  never argv, so nothing shows in process listings; the outcome is one
+  machine-readable word on stdout (`ok`, `bad-credentials`,
+  `unprovisioned`, `rate-limited`, `error: <reason>`) with the matching
+  exit status 0-4.
+- `zert logout` — delete stored credentials.
+- `zert me` — show profile, quota, pubkey.
+- `zert key register` — register the account's ssh public key — the key
+  line arrives on stdin, never argv
+  (`zert key register < ~/.ssh/id_ed25519.pub`); one account has one
+  active laptop, so registering over a previous key displaces that
+  laptop — its key stops working.
 
 ## Configuration
 

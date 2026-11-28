@@ -431,6 +431,12 @@ func TestTunnelMeEnsuresOnceAndDialsThatMachine(t *testing.T) {
 	if out != "hello-through-the-relay" {
 		t.Fatalf("the relay's byte path must be unchanged, got %q", out)
 	}
+	// silence plus one ask: the stable name renders nothing on success —
+	// the story is the door's to tell and this caller chose not to, so
+	// the ssh stream and the Customer's terminal stay untouched
+	if errOut != "" {
+		t.Fatalf("the stable name renders nothing into the pipe, stderr said: %q", errOut)
+	}
 	if strings.Contains(errOut, "zzz9") {
 		t.Fatalf("the id must stay invisible to the Customer, stderr said: %q", errOut)
 	}
@@ -444,7 +450,7 @@ func TestTunnelMePlacesTheFirstMachine(t *testing.T) {
 	fs := newFakeServer(t) // nothing live: ensure places the one machine
 	setupHome(t, fs.URL)
 
-	out, _, err := driveTunnel(t, []string{"me"}, "first-connect")
+	out, errOut, err := driveTunnel(t, []string{"me"}, "first-connect")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -460,6 +466,11 @@ func TestTunnelMePlacesTheFirstMachine(t *testing.T) {
 	}
 	if out != "first-connect" {
 		t.Fatalf("the relay's byte path must be unchanged, got %q", out)
+	}
+	// a placed machine hears the same silence: setup ends before the
+	// Customer notices it began
+	if errOut != "" {
+		t.Fatalf("the stable name renders nothing into the pipe, stderr said: %q", errOut)
 	}
 }
 
@@ -486,6 +497,44 @@ func TestTunnelMeRefusalPassesThrough(t *testing.T) {
 	}
 	if len(paths) != 0 {
 		t.Fatalf("a refused wake must open no relay, dialled %v", paths)
+	}
+}
+
+// TestTunnelMeQuotaShowsTheWayForward pins story 11's tunnel half: the
+// stable name's silence covers the outcome story only. A quota refusal
+// carries a way forward — the whole listing and the hint — and it must
+// reach this command's own error stream even here, where success renders
+// nothing: the Customer behind the ssh config learns what is theirs and
+// how a slot frees, never a silent hang.
+func TestTunnelMeQuotaShowsTheWayForward(t *testing.T) {
+	fs := newFakeServer(t)
+	fs.live = []string{"vmQ"} // the quota is reached: a machine is live
+	fs.create = func(w http.ResponseWriter, _ int) {
+		http.Error(w, `{"detail":"quota reached (1 live VM)"}`, 409)
+	}
+	setupHome(t, fs.URL)
+
+	_, errOut, err := driveTunnel(t, []string{"me"}, "")
+	if err == nil || !strings.Contains(err.Error(), "quota reached") {
+		t.Fatalf("the refusal must pass through as its message, got %v", err)
+	}
+	if !strings.Contains(errOut, "quota reached (1 live VM)") {
+		t.Fatalf("the door's refusal message must reach the command's error stream, got %q", errOut)
+	}
+	if !strings.Contains(errOut, "your VMs:") || !strings.Contains(errOut, "vmQ") {
+		t.Fatalf("the quota listing must reach the command's error stream, got %q", errOut)
+	}
+	if !strings.Contains(errOut, "zert kill <id>") {
+		t.Fatalf("the way forward must reach the command's error stream, got %q", errOut)
+	}
+	fs.mu.Lock()
+	asks, paths := fs.ensureAsks, append([]string(nil), fs.tunnelPaths...)
+	fs.mu.Unlock()
+	if asks != 1 {
+		t.Fatalf("a refusal is final: want 1 ask, got %d", asks)
+	}
+	if len(paths) != 0 {
+		t.Fatalf("a refused ask must open no relay, dialled %v", paths)
 	}
 }
 

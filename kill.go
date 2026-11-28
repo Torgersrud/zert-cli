@@ -35,11 +35,12 @@ func killIDs(a api, stderr io.Writer, ids []string) error {
 	return nil
 }
 
+// cmdKill ends machines: bare (no args) and `all` both take down every
+// vm the listing answers, explicit ids take down those alone. An
+// empty-string argument is not an id — `zert kill ""` is the usage
+// error, never the id guard's wording.
 func cmdKill(args []string) error {
-	if len(args) == 0 || args[0] == "" {
-		return errors.New("usage: zert kill <id>|all")
-	}
-	if killAll(args) {
+	if len(args) == 0 || killAll(args) {
 		_, a := requireLogin()
 		rows, err := listVMs(a)
 		if err != nil {
@@ -55,9 +56,12 @@ func cmdKill(args []string) error {
 		}
 		return killIDs(a, os.Stderr, ids)
 	}
+	if args[0] == "" {
+		return errors.New("usage: zert kill <id>..")
+	}
 	for _, id := range args {
 		if !validSandboxID(id) {
-			return errors.New("invalid vm id")
+			return errInvalidVMID
 		}
 	}
 	_, a := requireLogin()

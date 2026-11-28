@@ -45,11 +45,12 @@ func wsURL(host, id string) (string, error) {
 // server refuses an id that is not one of the Customer's machines and a
 // sleeping one with the same bare close and no reason, so the message
 // admits both and teaches the way back — connecting is what wakes a
-// sleeper.
+// sleeper. 4401 and 4410 name the shared wordings (wording.go): the table
+// translates wire codes, it never restates a rule.
 var closeCodeMsg = map[websocket.StatusCode]string{
-	4401: "session expired — run `zert login`",
+	4401: errSessionExpired.Error(),
 	4403: "no such vm (or not yours), or it is asleep — connecting to it (zert vm / ssh zert) wakes it",
-	4410: "vm expired — start a new one with `zert vm`",
+	4410: errVMExpired.Error(),
 }
 
 // closeMsg prefers the server's close reason, falling back to the
@@ -108,7 +109,7 @@ func dialWS(ctx context.Context, u, token string) (*websocket.Conn, error) {
 		}
 		if resp != nil {
 			if resp.StatusCode == http.StatusUnauthorized {
-				return nil, errors.New(closeCodeMsg[4401])
+				return nil, errSessionExpired
 			}
 			return nil, err
 		}
@@ -227,7 +228,7 @@ func cmdTunnel(args []string) error {
 	}
 	id := fs.Arg(0)
 	if id != tunnelMe && !validSandboxID(id) {
-		return errors.New("invalid vm id")
+		return errInvalidVMID
 	}
 	host, token, err := resolveTunnelTarget()
 	if err != nil {
@@ -236,12 +237,15 @@ func cmdTunnel(args []string) error {
 	if id == tunnelMe {
 		// the stable name: one ensure ask answers the Customer's one
 		// machine — placed, woken, or returned live — before the relay
-		// opens, so the byte path dials a machine that is awake. A
-		// refusal passes through with its message: the Customer learns
-		// the wake path or the reason, never a silent hang. Nothing is
-		// printed on success — a wake is a few seconds' pause, and the
-		// id the ask resolved stays invisible.
-		vm, err := ensureVM(api{host: host, token: token})
+		// opens, so the byte path dials a machine that is awake. The
+		// outcome's story is silenced — io.Discard, because this path
+		// renders nothing into the pipe — but a refusal's way forward
+		// is never silenced: the quota listing and its hint reach this
+		// command's own error stream, and the id the ask resolved stays
+		// invisible. A refusal passes through with its message: the
+		// Customer learns the wake path or the reason, never a silent
+		// hang.
+		vm, _, err := askMachine(api{host: host, token: token}, io.Discard, os.Stderr)
 		if err != nil {
 			return err
 		}

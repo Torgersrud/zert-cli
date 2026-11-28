@@ -62,43 +62,22 @@ func refuseUnsafe(resolved string) error {
 	return nil
 }
 
-// pickLiveVM returns the first live row, or nil.
-func pickLiveVM(rows []vmRow) *vmRow {
-	for i := range rows {
-		if rows[i].Live {
-			return &rows[i]
-		}
-	}
-	return nil
-}
-
-type countWriter struct {
-	w io.Writer
-	n int64
-}
-
-func (c *countWriter) Write(p []byte) (int, error) {
-	n, err := c.w.Write(p)
-	c.n += int64(n)
-	return n, err
-}
-
 // packTar streams src (file or dir) as a gzip-compressed tar rooted at base
-// into w, and returns the raw and compressed byte counts. Symlinks are
-// dereferenced (like scp -r did); broken symlinks and non-regular,
-// non-directory files are skipped.
-func packTar(w io.Writer, src, base string) (int64, int64, error) {
-	cw := &countWriter{w: w}
-	zw, err := gzip.NewWriterLevel(cw, gzip.BestSpeed)
+// into w, and returns the raw byte count. Symlinks are dereferenced (like
+// scp -r did); broken symlinks and non-regular, non-directory files are
+// skipped. The compressed total is the transfer module's answer — the pipe
+// is its, and so is the counting.
+func packTar(w io.Writer, src, base string) (int64, error) {
+	zw, err := gzip.NewWriterLevel(w, gzip.BestSpeed)
 	if err != nil {
-		return 0, 0, err
+		return 0, err
 	}
 	tw := tar.NewWriter(zw)
 	var raw int64
 	// #nosec G703 -- src is the user-requested upload source, guarded by refuseUnsafe before we get here
 	fi, err := os.Stat(src)
 	if err != nil {
-		return 0, 0, err
+		return 0, err
 	}
 	if fi.IsDir() {
 		err = addTree(tw, src, base, fi, &raw)
@@ -112,7 +91,7 @@ func packTar(w io.Writer, src, base string) (int64, int64, error) {
 			err = cerr
 		}
 	}
-	return raw, cw.n, err
+	return raw, err
 }
 
 // addTree writes dir (as an entry plus contents) recursively. name uses
@@ -194,10 +173,22 @@ func humanBytes(n int64) string {
 // streamed as a tar.gz through a single ssh exec (`tar -xzf - -C ~`), which
 // avoids scp's per-file round trips and compresses the whole tree as one
 // stream (compression happens client-side, before the encrypted tunnel).
-// sshArgs comes from parseSSHArgs and applies to the interactive session
-// entered after the copy — always when this call created the vm, and also
-// for a pre-existing live vm when the user passed extra args.
+// sshArgs are the customer's ssh arguments after the path, unparsed: the
+// one scan that answers them — the args forwarded verbatim, the swallowed
+// --keep with its notice on stderr, where a user command starts — happens
+// here, inside the runner, and its answers apply to the interactive Entry
+// after the copy — always when this call created the vm, and also for a
+// pre-existing live vm when the scan forwards args.
 func uploadRun(arg string, sshArgs []string, stdin io.Reader, stdout, stderr io.Writer) error {
+	// the one walk: everything the grammar answers — the args ssh gets,
+	// the swallowed --keep, where the user's command starts — is answered
+	// here, once, before the copy decides anything, so even a refused
+	// upload has warned for a swallowed --keep
+	scan := scanSSHArgs(sshArgs)
+	if scan.sawKeep {
+		warnKeepDeprecated(stderr)
+	}
+
 	src := expandTilde(arg)
 	trimmed := strings.TrimRight(src, "/")
 	base := filepath.Base(trimmed)
@@ -221,38 +212,9 @@ func uploadRun(arg string, sshArgs []string, stdin io.Reader, stdout, stderr io.
 		return err
 	}
 
-	creds, a := requireLogin()
-	// run the two independent profile/vm lookups concurrently
-	var me *meInfo
-	meCh := make(chan error, 1)
-	go func() {
-		var err error
-		me, err = getMe(a)
-		meCh <- err
-	}()
-	rows, err := listVMs(a)
-	if meErr := <-meCh; meErr != nil {
-		return meErr // 401 -> "session expired — run `zert login`"
-	}
+	creds, vm, created, err := resolveCopyTarget(stderr)
 	if err != nil {
 		return err
-	}
-	if err := ensurePubkey(a, me, stderr); err != nil {
-		return err
-	}
-
-	vm := pickLiveVM(rows)
-	created := false
-	if vm == nil {
-		// the same pre-check as the vm command, on the listing already in
-		// hand: wakeOrCreate announces the ask the listing calls for —
-		// waking an Asleep row, placing one when nothing answerable is
-		// listed — and makes it
-		vm, err = wakeOrCreate(a, rows, stderr)
-		if err != nil {
-			return err
-		}
-		created = true
 	}
 
 	dest := vmUserDest(vm.SandboxID)
@@ -268,33 +230,30 @@ func uploadRun(arg string, sshArgs []string, stdin io.Reader, stdout, stderr io.
 	}
 	fmt.Fprintf(stderr, "uploading %s (%s) → %s:~/%s\n", abs, kind, dest, base)
 
-	pr, pw := io.Pipe()
-	packDone := make(chan error, 1)
-	var raw, packed int64
-	go func() {
-		r, p, err := packTar(pw, src, base)
-		raw, packed = r, p
-		pw.CloseWithError(err)
-		packDone <- err
-	}()
-	// the packer runs concurrently with the copy: its pipe writes simply
-	// block until execInVM's ssh child is alive and reading
-	sshErr := execInVM(creds, vm, uploadRemoteCmd, pr, stdout, stderr)
-	packErr := <-packDone
-	if sshErr != nil {
-		return sshErr
-	}
-	// a broken pipe with a clean ssh exit just means ssh closed stdin early
-	if packErr != nil && !errors.Is(packErr, io.ErrClosedPipe) {
-		return fmt.Errorf("packing %s: %w", abs, packErr)
+	// what is genuinely upload's: the source and base validated above, the
+	// remote command every upload spells, and the pack codec with its
+	// wording — the pipe, the counting, the spawn-failure release and the
+	// failure precedence belong to the transfer module
+	var raw int64
+	packed, err := transferToVM(vmLink{creds: creds, vm: vm}, uploadRemoteCmd, stdout, stderr,
+		func(w io.Writer) error {
+			r, packErr := packTar(w, src, base)
+			raw = r
+			return packErr
+		},
+		func(e error) error {
+			return fmt.Errorf("packing %s: %w", abs, e)
+		})
+	if err != nil {
+		return err
 	}
 	fmt.Fprintf(stderr, "uploaded %s (%s → %s compressed)\n", abs, humanBytes(raw), humanBytes(packed))
 
 	// leaving the entered vm never kills it: only `zert kill` or its expiry
 	// ends a vm — and --keep no longer decides anything either.
-	if created || len(sshArgs) > 0 {
+	if created || len(scan.args) > 0 {
 		fmt.Fprintf(stderr, "entering vm %s …\n", vm.SandboxID)
-		return enterVM(creds, vm, sshArgs, stdin, stdout, stderr)
+		return enterVM(vmLink{creds: creds, vm: vm}, scan, stdin, stdout, stderr)
 	}
 	return nil
 }
@@ -303,6 +262,5 @@ func cmdUpload(args []string) error {
 	if len(args) < 1 {
 		return errors.New("usage: zert <path> [ssh args..]")
 	}
-	sshArgs := parseSSHArgs(os.Stderr, args[1:])
-	return uploadRun(args[0], sshArgs, os.Stdin, os.Stdout, os.Stderr)
+	return uploadRun(args[0], args[1:], os.Stdin, os.Stdout, os.Stderr)
 }

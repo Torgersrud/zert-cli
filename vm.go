@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -59,156 +58,36 @@ func findLocalPubkey() (string, error) {
 	return "", errors.New("no ssh key found: run `ssh-keygen -t ed25519` first")
 }
 
-// hasAnswerableVM reports whether the listing carries a machine the door's
-// ensure ask answers as the Customer's own — one that is running or
-// asleep. Rows that are neither (expired, or a state word this build has
-// never seen) are dead rows: they answer nothing, and the ask places a
-// machine instead.
-func hasAnswerableVM(rows []vmRow) bool {
-	for _, r := range rows {
-		if r.Live || r.Asleep {
-			return true
-		}
-	}
-	return false
-}
-
-// wakeOrCreate announces the ensure ask a customer without a live machine
-// makes, and makes it: the machine is theirs and asleep — woken — or
-// nothing answerable is listed and one is placed. The wording lives here
-// once, so the escape hatch and the copy-in path tell the same story.
-func wakeOrCreate(a api, rows []vmRow, stderr io.Writer) (*vmRow, error) {
-	if hasAsleepVM(rows) {
-		fmt.Fprintln(stderr, "no live vm — waking yours …")
-	} else {
-		fmt.Fprintln(stderr, "no live vm — creating one …")
-	}
-	return ensureVM(a)
-}
-
-// ensureVM asks the door for the Customer's one machine — POST /v1/vm is the
-// ensure call ("give me my machine"): a live machine is answered as it is, an
-// Asleep one is woken, and only a Customer with nothing gets one placed. The
-// response says what the machine is, never which of the three happened, so a
-// caller that needs to tell the Customer that learns it from a listing before
-// the ask.
-func ensureVM(a api) (*vmRow, error) {
-	resp, data, err := a.do("POST", "/v1/vm", map[string]any{})
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode == http.StatusBadGateway {
-		// one automatic retry, and a safe one now: the route is
-		// idempotent ensure, so a 502 that actually reached the door
-		// answered the Customer's machine, and asking again returns
-		// that machine instead of placing a second one.
-		resp, data, err = a.do("POST", "/v1/vm", map[string]any{})
-		if err != nil {
-			return nil, err
-		}
-	}
-	switch resp.StatusCode {
-	case http.StatusCreated:
-	case http.StatusConflict:
-		fmt.Fprintln(os.Stderr, detail(data))
-		fmt.Fprintln(os.Stderr, "your VMs:")
-		if rows, err := listVMs(a); err == nil {
-			printVMs(rows)
-		}
-		fmt.Fprintln(os.Stderr, "hint: zert attach <id> attaches to a live vm; "+
-			"zert kill <id> (or zert kill all) frees a slot")
-		return nil, &exitError{1, errors.New("quota reached")}
-	default:
-		return nil, mapped(resp, data)
-	}
-	var out struct {
-		SandboxID string  `json:"sandbox_id"`
-		ExpiresAt float64 `json:"expires_at"`
-		State     string  `json:"state"`
-	}
-	if err := json.Unmarshal(data, &out); err != nil || out.SandboxID == "" {
-		return nil, errors.New("malformed ensure response")
-	}
-	if !validSandboxID(out.SandboxID) {
-		return nil, errors.New("malformed server response: invalid vm id")
-	}
-	// every 201 outcome — created, woken or returned live — hands over a
-	// running machine, so anything else is a door that did not keep the
-	// contract, and the CLI refuses to enter it
-	if out.State != "running" {
-		return nil, errors.New("malformed ensure response: vm not running")
-	}
-	return &vmRow{SandboxID: out.SandboxID, ExpiresAt: out.ExpiresAt, Live: true}, nil
-}
-
-// parseSSHArgs returns the args forwarded verbatim to ssh — everything
-// after "--" is passthrough — and swallows the deprecated --keep flag:
-// when it was given, this one place prints its deprecation notice, so
-// every entry path (vm, attach, upload) warns exactly once.
-func parseSSHArgs(stderr io.Writer, args []string) (sshArgs []string) {
-	passthrough := false
-	keep := false
-	for _, a := range args {
-		if passthrough {
-			sshArgs = append(sshArgs, a)
-			continue
-		}
-		switch a {
-		case "--":
-			passthrough = true
-		case "--keep", "-keep":
-			keep = true
-		default:
-			sshArgs = append(sshArgs, a)
-		}
-	}
-	if keep {
-		warnKeepDeprecated(stderr)
-	}
-	return sshArgs
-}
-
-// warnKeepDeprecated prints the one deprecation notice for the --keep flag,
-// which no longer changes anything: no entry path kills a vm on exit.
-func warnKeepDeprecated(stderr io.Writer) {
-	fmt.Fprintln(stderr, "--keep is obsolete — vms no longer die on exit")
-}
-
 // vmRun is cmdVM with injectable stdio and ssh binary (for the runner seam).
 func vmRun(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
-	sshArgs := parseSSHArgs(stderr, args)
+	// the one walk: everything the grammar answers — the args ssh gets,
+	// the swallowed --keep, where the user's command starts — is answered
+	// here, once, before the ask
+	scan := scanSSHArgs(args)
+	if scan.sawKeep {
+		warnKeepDeprecated(stderr)
+	}
 
 	creds, a := requireLogin()
 	me, err := getMe(a)
 	if err != nil {
-		return err // 401 -> "session expired — run `zert login`"
+		return err // 401 -> errSessionExpired
 	}
 	if err := ensurePubkey(a, me, stderr); err != nil {
 		return err
 	}
 
-	// The ensure response carries no outcome word, so the listing decides
-	// what the command tells the Customer: a row the door can answer —
-	// running or asleep — means the ask hands over a machine that is
-	// already theirs, found, not created. Dead rows answer nothing, so the
-	// ask places one and the wording says so.
-	rows, err := listVMs(a)
-	if err != nil {
-		return err
-	}
-	if hasAnswerableVM(rows) {
-		fmt.Fprintln(stderr, "found your vm — entering it")
-	} else {
-		fmt.Fprintln(stderr, "creating vm …")
-	}
-	vm, err := ensureVM(a)
+	// the door owns the ask and its outcome story: the machine, which of
+	// the three outcomes happened and the wording all come back from the
+	// one ask
+	vm, _, err := askMachine(a, stderr, stderr)
 	if err != nil {
 		return err
 	}
 	fmt.Fprintf(stderr, "vm %s ready (expires in %s)\n", vm.SandboxID,
 		time.Until(time.Unix(int64(vm.ExpiresAt), 0)).Round(time.Second))
 
-	return enterVM(creds, vm, sshArgs, stdin, stdout, stderr)
+	return enterVM(vmLink{creds: creds, vm: vm}, scan, stdin, stdout, stderr)
 }
 
 func cmdVM(args []string) error {

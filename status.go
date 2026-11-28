@@ -5,39 +5,32 @@ import (
 )
 
 // cmdStatus answers the Customer's one question — is my machine on? — in
-// plain words. The state is read from the door's listing row (its live /
-// asleep / creating flags), never guessed from the clock, and the machine's
-// raw id never appears here: ids live in `zert ls` and nowhere else on the
-// customer-facing surface.
+// plain words. Which row is the machine is the door's question, not this
+// command's: it renders the answer the door gave — the machine's row,
+// none, or the several-row anomaly admitted as unusual — and the state
+// is read from the row's own flags (its live / asleep / creating words),
+// never guessed from the clock. The machine's raw id never appears here:
+// ids live in `zert ls` and nowhere else on the customer-facing surface.
 func cmdStatus([]string) error {
 	_, a := requireLogin()
-	rows, err := listVMs(a)
+	which, row, err := askWhichRow(a)
 	if err != nil {
 		return err
 	}
-	if len(rows) == 0 {
+	switch which {
+	case doorRowNone:
 		fmt.Println("no machine yet — run `zert vm` to make one")
 		return nil
+	case doorRowSeveral, doorRowDead:
+		// the Customer has one machine, so the door naming no row is a
+		// server-side anomaly this command must not paper over —
+		// whether several machines answer or no row does, the admission
+		// points at the technical listing instead of naming whatever
+		// state an arbitrary row happens to carry
+		fmt.Println(errUnusualListing.Error())
+		return nil
 	}
-	// the Customer has one machine, so several rows are a server-side
-	// anomaly this command must not paper over by picking one: when
-	// exactly one row is a machine the door can answer — running, asleep,
-	// or being made — that row is the machine; any other several-row
-	// listing is admitted as unusual and pointed at the technical one.
-	if len(rows) > 1 {
-		var answerable []vmRow
-		for _, r := range rows {
-			if r.Live || r.Asleep || r.Creating {
-				answerable = append(answerable, r)
-			}
-		}
-		if len(answerable) != 1 {
-			fmt.Println("your machine listing is unusual — `zert ls` shows what the server says")
-			return nil
-		}
-		rows = answerable
-	}
-	r := rows[0] // the Customer's one machine: one live-or-asleep machine per customer
+	r := *row // the Customer's one machine, whatever state word its row carries
 	switch {
 	case r.Creating:
 		fmt.Println("your machine is being created — give it a moment, then ask again")

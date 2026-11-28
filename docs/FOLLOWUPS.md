@@ -24,7 +24,8 @@ Closed, and not by a key: `POST /v1/vm` became idempotent **ensure** — "give m
 my machine" (backend ticket `Torgersrud/zert-backend#121`; the contract is
 zert-backend's `docs.md`, section "VM ensure request contract"). The same ask
 always answers the Customer's one machine — live → that one, Asleep → woken,
-nothing → created — so the CLI's one `502` retry (`ensureVM` in vm.go) returns
+nothing → created — so the CLI's one `502` retry (`ensureVM` in the door
+module, `door.go`) returns
 the machine the failed ask already placed instead of minting a second. The
 retry keeps its trigger and its single attempt; refusals place nothing and are
 never retried. CLI side: [Torgersrud/zert-cli#18](https://github.com/Torgersrud/zert-cli/issues/18).

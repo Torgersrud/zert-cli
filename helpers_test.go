@@ -1,11 +1,11 @@
 package main
 
 // Shared test scaffolding for every path that runs ssh against a vm: the
-// interactive Entry (`zert vm`, `zert attach`, and the post-copy entry of
-// `zert <path>`), upload's copy stream, and `zert extract`.
+// interactive Entry (`zert vm` and the post-copy entry of `zert <path>`),
+// upload's copy stream, and `zert extract`.
 //
 // Nothing here opens a new seam. Every test drives a command runner
-// (vmRun/attachRun/uploadRun/extractRun) with injectable stdio against the
+// (vmRun/uploadRun/extractRun) with injectable stdio against the
 // two seams the production code already has: the API through the in-process
 // fake below plus the credentials setupHome writes, and the ssh binary
 // through the sshPath package var. What a test may observe is what a caller
@@ -236,6 +236,10 @@ const (
 	streamSwallowStdin = "cat > /dev/null"
 	streamRecordStdin  = `cat > "$FAKE_SSH_STDIN"`
 	streamReplayStdout = `cat "$FAKE_SSH_STDOUT"`
+	// streamExitRightAway reads none of its stdin: it ends the copy's far
+	// side at once, the shape of a remote command that wants no input —
+	// a child that closes the stream's start early and ends clean.
+	streamExitRightAway = "true"
 )
 
 // streamBlockUntilSignal is the shape of a long copy the user interrupts: no
@@ -391,7 +395,7 @@ func assertTokenInChildEnvOnly(t *testing.T, logged string) {
 }
 
 // assertNoVMDeleted pins that no ssh path Ends a vm's life: an Entry —
-// entered, attached or copied through — leaves the vm Detached at most, and
+// entered or copied through — leaves the vm Detached at most, and
 // only `zert kill` or an expired Idle window ends it. why names the path, so
 // a failure says which one drifted.
 func assertNoVMDeleted(t *testing.T, fs *fakeServer, why string) {
@@ -415,14 +419,6 @@ func assertNoSSHSpawned(t *testing.T, logPath, why string) {
 }
 
 // --- misc shared fixtures ------------------------------------------------
-
-// tmuxWrapCmd is the remote command every interactive entry runs, pinned
-// verbatim: enter/attach the one tmux session "zert" when the guest has
-// tmux, plain login shell when it does not (a vm from the pre-tmux
-// Template). It is the contract, so the test owns the literal — and the
-// literal is a deliberate byte-for-byte duplicate of vmssh.go's
-// interactiveRemoteCmd: if you change one, edit both literals together.
-const tmuxWrapCmd = `command -v tmux >/dev/null 2>&1 && exec tmux new -As zert || exec "${SHELL:-sh}" -l`
 
 // fakeTTY makes stdinIsInteractive report a terminal — a test binary's
 // stdin never is one — so the interactive paths can pin their tmux wrap.

@@ -68,17 +68,6 @@ func extractRemoteCmd(dir, base string) string {
 	return "tar -czf - -C " + q + " -- '" + base + "'"
 }
 
-type countReader struct {
-	r io.Reader
-	n int64
-}
-
-func (c *countReader) Read(p []byte) (int, error) {
-	n, err := c.r.Read(p)
-	c.n += int64(n)
-	return n, err
-}
-
 // extractTarGz writes a gzip-compressed tar stream into dir (which must
 // exist), returning the number of regular files and the total bytes written.
 // Entries are treated as untrusted (they come from the vm): absolute paths,
@@ -157,7 +146,10 @@ func extractTarGz(dir string, r io.Reader) (files int, raw int64, err error) {
 // uploadRun: the vm streams a tar.gz of vmPath over ssh stdout and it is
 // unpacked into dest. Nothing of the transfer goes to the CLI's stdout — the
 // bytes land in the unpacked files — so there is no stdout writer here.
-// It never creates, enters or kills a vm — the vm must already be live.
+// The way out asks the door with the same story as every other path: a
+// machine that is not running is woken or placed by the one ensure ask
+// before the copy dials, and the story is the ask's, derived from its own
+// snapshot. It never enters or kills a vm.
 func extractRun(vmPathArg, dest string, stderr io.Writer) error {
 	// parse before any network: a bad name must cost zero requests
 	dir, base, err := splitRemotePath(vmPathArg)
@@ -165,29 +157,9 @@ func extractRun(vmPathArg, dest string, stderr io.Writer) error {
 		return err
 	}
 
-	creds, a := requireLogin()
-	// run the two independent profile/vm lookups concurrently
-	var me *meInfo
-	meCh := make(chan error, 1)
-	go func() {
-		var err error
-		me, err = getMe(a)
-		meCh <- err
-	}()
-	rows, err := listVMs(a)
-	if meErr := <-meCh; meErr != nil {
-		return meErr // 401 -> "session expired — run `zert login`"
-	}
+	creds, vm, _, err := resolveCopyTarget(stderr)
 	if err != nil {
 		return err
-	}
-	if err := ensurePubkey(a, me, stderr); err != nil {
-		return err
-	}
-
-	vm := pickLiveVM(rows)
-	if vm == nil {
-		return errNoLiveVM
 	}
 
 	if dest == "" {
@@ -205,41 +177,26 @@ func extractRun(vmPathArg, dest string, stderr io.Writer) error {
 	remote := vmUserDest(vm.SandboxID)
 	fmt.Fprintf(stderr, "extracting %s:%s → %s …\n", remote, vmPathArg, absDest)
 
-	pr, pw := io.Pipe()
-	cr := &countReader{r: pr}
-	extractDone := make(chan error, 1)
+	// what is genuinely extract's: the name validated above, the remote
+	// command it spells, and the unpack codec with its wording — the pipe,
+	// the spawn-failure release and the failure precedence belong to the
+	// transfer module
 	var files int
 	var raw int64
-	go func() {
-		f, n, err := extractTarGz(absDest, cr)
-		if err == nil {
-			// tar stops reading at the end-of-archive marker; drain the
-			// tail so ssh's stdout copy can finish instead of stalling
-			_, err = io.Copy(io.Discard, cr)
-		}
-		if err != nil {
-			// abort: close the read end so a still-writing ssh sees EPIPE
-			// and exec's stdout copy unblocks Wait
-			_ = pr.CloseWithError(err)
-		}
-		files, raw = f, n
-		extractDone <- err
-	}()
-	// the untar runs concurrently with the transfer: it simply blocks on the
-	// pipe until execInVM's ssh child starts writing
-	sshErr := execInVM(creds, vm, extractRemoteCmd(dir, base), nil, pw, stderr)
-	_ = pw.Close() // child is gone: hand the untar reader its EOF
-	tarErr := <-extractDone
-	if sshErr != nil {
-		// ssh's exit code is the authoritative failure; a downstream stream
-		// error is usually just the fallout of the truncated transfer
-		return sshErr
-	}
-	if tarErr != nil && !errors.Is(tarErr, io.ErrClosedPipe) {
-		return fmt.Errorf("extracting %s: %w", vmPathArg, tarErr)
+	compressed, err := transferFromVM(vmLink{creds: creds, vm: vm}, extractRemoteCmd(dir, base), stderr,
+		func(r io.Reader) error {
+			f, n, tarErr := extractTarGz(absDest, r)
+			files, raw = f, n
+			return tarErr
+		},
+		func(e error) error {
+			return fmt.Errorf("extracting %s: %w", vmPathArg, e)
+		})
+	if err != nil {
+		return err
 	}
 	fmt.Fprintf(stderr, "extracted %d files (%s → %s compressed)\n",
-		files, humanBytes(raw), humanBytes(cr.n))
+		files, humanBytes(raw), humanBytes(compressed))
 	return nil
 }
 

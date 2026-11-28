@@ -112,7 +112,7 @@ func TestUploadEntryRunsTmuxCopyStreamNever(t *testing.T) {
 		!strings.Contains(lines[0], uploadRemoteCmd) {
 		t.Fatalf("the copy stream must never see tmux or a forced -t: %s", lines[0])
 	}
-	if !strings.Contains(lines[1], "user@vm123 "+tmuxWrapCmd) {
+	if !strings.Contains(lines[1], "user@vm123 "+TmuxWrapCmd) {
 		t.Fatalf("the post-copy entry must run inside the tmux session: %s", lines[1])
 	}
 }
@@ -197,6 +197,63 @@ func TestUploadExpiredRowSaysCreating(t *testing.T) {
 	}
 }
 
+// TestUploadSeveralRowsRefusesInsteadOfPicking pins the several-row
+// anomaly's copy-in half: a listing that does not name one machine is
+// refused before anything streams — no ssh spawn, no ensure ask — never
+// resolved by silently streaming into whichever row sorted first. The
+// refusal is the copy arms' own wording: the anomaly is admitted, the
+// copy is refused, and `zert ls` is where the server's raw answer shows.
+func TestUploadSeveralRowsRefusesInsteadOfPicking(t *testing.T) {
+	fs := newFakeServer(t)
+	setupHome(t, fs.URL)
+	logPath := fakeSSH(t)
+	fs.live = []string{"vmA", "vmB"}
+	fs.create = func(w http.ResponseWriter, _ int) {
+		t.Error("a several-row refusal must never reach the ensure ask")
+		http.Error(w, `{"detail":"no"}`, 500)
+	}
+	dir := tempDirNamed(t, "mydir")
+	var stderr bytes.Buffer
+
+	err := uploadRun(dir, nil, strings.NewReader(""), os.Stdout, &stderr)
+	if err == nil || !strings.Contains(err.Error(), "several machines") ||
+		!strings.Contains(err.Error(), "refusing to copy") ||
+		!strings.Contains(err.Error(), "`zert ls`") {
+		t.Fatalf("a several-row listing must be refused and pointed at the listing, got %v", err)
+	}
+	assertNoSSHSpawned(t, logPath, "a several-row listing")
+	assertNoVMDeleted(t, fs, "a refused upload")
+}
+
+// TestUploadDeadRowsPlaceInsteadOfRefusing pins the corrected policy's
+// copy-in half: several dead rows are not the several-machine anomaly —
+// the Customer has no machine the copy could choose wrong — so the copy
+// proceeds exactly as an empty listing does: the ask places a machine,
+// the story says creating, and the copy streams into what was placed.
+func TestUploadDeadRowsPlaceInsteadOfRefusing(t *testing.T) {
+	fs := newFakeServer(t)
+	fs.expired = []string{"vmA", "vmB"}
+	setupHome(t, fs.URL)
+	logPath := fakeSSH(t)
+	var stderr bytes.Buffer
+	dir := tempDirNamed(t, "mydir")
+
+	if err := uploadRun(dir, nil, strings.NewReader(""), os.Stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if got := stderr.String(); !strings.Contains(got, "creating one") || strings.Contains(got, "several machines") {
+		t.Fatalf("several dead rows must be told creating, never refused as several, got %q", got)
+	}
+	asks, placed := fs.ensureCounts()
+	if asks != 1 || len(placed) != 1 || placed[0] != "vm123" {
+		t.Fatalf("the ask must place the one machine, got %d asks, placed %v", asks, placed)
+	}
+	if logged := readLog(t, logPath); !strings.Contains(logged, "user@vm123") {
+		t.Fatalf("the copy must stream into the placed machine: %s", logged)
+	}
+	assertNoVMDeleted(t, fs, "an upload past dead rows")
+}
+
 func TestUploadSSHArgsForwarded(t *testing.T) {
 	fs := newFakeServer(t)
 	setupHome(t, fs.URL)
@@ -221,17 +278,17 @@ func TestUploadKeepWarnsObsoleteAndNeverKills(t *testing.T) {
 	logPath := fakeSSH(t)
 	dir := tempDirNamed(t, "mydir")
 
-	// cmdUpload is the upload path's one --keep call site (inside parseSSHArgs)
-	stderr := captureStderr(t, func() {
-		if err := cmdUpload([]string{dir, "--keep"}); err != nil {
-			t.Fatal(err)
-		}
-	})
-	if n := strings.Count(stderr, "obsolete"); n != 1 {
-		t.Fatalf("want exactly one --keep deprecation notice on stderr, got %d in %q", n, stderr)
+	// the scan is the runner's: the swallow's saw-keep answer prints its
+	// notice on the runner's stderr writer, like every word this path says
+	var stderr bytes.Buffer
+	if err := uploadRun(dir, []string{"--keep"}, strings.NewReader(""), os.Stdout, &stderr); err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(stderr, "no longer die on exit") {
-		t.Fatalf("notice must say vms no longer die on exit, got %q", stderr)
+	if n := strings.Count(stderr.String(), "obsolete"); n != 1 {
+		t.Fatalf("want exactly one --keep deprecation notice on the runner's stderr, got %d in %q", n, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "no longer die on exit") {
+		t.Fatalf("notice must say vms no longer die on exit, got %q", stderr.String())
 	}
 	var plain bool
 	for _, line := range argLines(readLog(t, logPath)) {
@@ -277,19 +334,18 @@ func TestUploadLiveVMKeepChangesNothing(t *testing.T) {
 	fs.live = []string{"vmlive"}
 	dir := tempDirNamed(t, "proj")
 
-	stderr := captureStderr(t, func() {
-		if err := cmdUpload([]string{dir, "--keep"}); err != nil {
-			t.Fatal(err)
-		}
-	})
+	var stderr bytes.Buffer
+	if err := uploadRun(dir, []string{"--keep"}, strings.NewReader(""), os.Stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
 	// --keep changes nothing: a pre-existing live vm behaves exactly like
 	// the no-flag case — copy only, no interactive entry.
 	logged := readLog(t, logPath)
 	if n := len(argLines(logged)); n != 1 {
 		t.Fatalf("--keep must not enter an already-running vm, got %d ssh calls: %s", n, logged)
 	}
-	if n := strings.Count(stderr, "obsolete"); n != 1 {
-		t.Fatalf("want exactly one --keep deprecation notice on stderr, got %d in %q", n, stderr)
+	if n := strings.Count(stderr.String(), "obsolete"); n != 1 {
+		t.Fatalf("want exactly one --keep deprecation notice on the runner's stderr, got %d in %q", n, stderr.String())
 	}
 	assertNoVMDeleted(t, fs, "--keep on an already-running vm")
 }

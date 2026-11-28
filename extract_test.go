@@ -153,20 +153,136 @@ func TestExtractCreatesDestDir(t *testing.T) {
 	}
 }
 
+// TestExtractNoLiveVM pins copy-out's half of the door's story (spec
+// story 8): with nothing running, extract asks the door like every other
+// path instead of refusing — the one ensure ask places a machine, the
+// story says creating, and the copy streams out of the machine the ask
+// answered. Extract still never enters what it asked for: one ssh call,
+// the stream, and out.
 func TestExtractNoLiveVM(t *testing.T) {
 	fs := newFakeServer(t)
 	setupHome(t, fs.URL)
+	tarPath := makeTarGz(t, tarEntry{name: "out/a.txt", body: "hello", mode: 0644})
+	t.Setenv("FAKE_SSH_STDOUT", tarPath)
+	logPath := fakeSSHStreamingStdout(t)
+	var stderr bytes.Buffer
+	dest := t.TempDir()
+
+	if err := extractRun("~/out", dest, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if got := stderr.String(); !strings.Contains(got, "creating one") || strings.Contains(got, "waking yours") {
+		t.Fatalf("an empty listing must be told creating, never waking, got %q", got)
+	}
+	asks, placed := fs.ensureCounts()
+	if asks != 1 || len(placed) != 1 || placed[0] != "vm123" {
+		t.Fatalf("the ask must place the one machine, got %d asks, placed %v", asks, placed)
+	}
+	logged := readLog(t, logPath)
+	assertSSHCommonOptions(t, logged, "vm123")
+	if n := len(argLines(logged)); n != 1 {
+		t.Fatalf("extract never enters: exactly one ssh call, got %d: %s", n, logged)
+	}
+	b, err := os.ReadFile(filepath.Join(dest, "out", "a.txt"))
+	if err != nil || string(b) != "hello" {
+		t.Fatalf("the copy must land what the placed machine streamed, got %q, %v", b, err)
+	}
+	assertNoVMDeleted(t, fs, "an extract that places a machine")
+}
+
+// TestExtractWakesSleepingVM pins the waking half of copy-out's story,
+// mirroring the copy-in suite: a machine that fell asleep is woken by
+// the one ensure ask before the copy dials, so the stream comes out of
+// the machine that was asleep — never out of a fresh one placed past it
+// — and the story is the ask's outcome, never a guess at the row.
+func TestExtractWakesSleepingVM(t *testing.T) {
+	fs := newFakeServer(t)
+	fs.asleep = []string{"vms"}
+	setupHome(t, fs.URL)
+	tarPath := makeTarGz(t, tarEntry{name: "out/a.txt", body: "hello", mode: 0644})
+	t.Setenv("FAKE_SSH_STDOUT", tarPath)
+	logPath := fakeSSHStreamingStdout(t)
+	var stderr bytes.Buffer
+	dest := t.TempDir()
+
+	if err := extractRun("~/out", dest, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if got := stderr.String(); !strings.Contains(got, "waking yours") || strings.Contains(got, "creating one") {
+		t.Fatalf("a sleeper must be announced as woken, never as created, got %q", got)
+	}
+	asks, placed := fs.ensureCounts()
+	if asks != 1 || len(placed) != 0 {
+		t.Fatalf("one ask must wake the sleeper and place nothing, got %d asks, placed %v", asks, placed)
+	}
+	logged := readLog(t, logPath)
+	assertSSHCommonOptions(t, logged, "vms")
+	if n := len(argLines(logged)); n != 1 {
+		t.Fatalf("extract never enters: exactly one ssh call, got %d: %s", n, logged)
+	}
+	assertNoVMDeleted(t, fs, "an extract that wakes a sleeper")
+}
+
+// TestExtractSeveralRowsRefusesInsteadOfPicking pins the several-row
+// anomaly's copy-out half: a listing that does not name one machine is
+// refused before anything streams — no ssh spawn, no ensure ask — never
+// resolved by streaming out of whichever row sorted first. The refusal
+// is the copy arms' own wording: the anomaly is admitted, the copy is
+// refused, and `zert ls` is where the server's raw answer shows.
+func TestExtractSeveralRowsRefusesInsteadOfPicking(t *testing.T) {
+	fs := newFakeServer(t)
+	setupHome(t, fs.URL)
 	logPath := fakeSSH(t)
+	fs.live = []string{"vmA", "vmB"}
 	fs.create = func(w http.ResponseWriter, _ int) {
-		t.Error("extract must never create a vm")
+		t.Error("a several-row refusal must never reach the ensure ask")
 		http.Error(w, `{"detail":"no"}`, 500)
 	}
+	var stderr bytes.Buffer
 
-	err := extractRun("~/out", t.TempDir(), os.Stderr)
-	if err == nil || !strings.Contains(err.Error(), "no live vm") {
-		t.Fatalf("want no-live-vm error, got %v", err)
+	err := extractRun("~/out", t.TempDir(), &stderr)
+	if err == nil || !strings.Contains(err.Error(), "several machines") ||
+		!strings.Contains(err.Error(), "refusing to copy") ||
+		!strings.Contains(err.Error(), "`zert ls`") {
+		t.Fatalf("a several-row listing must be refused and pointed at the listing, got %v", err)
 	}
-	assertNoSSHSpawned(t, logPath, "no live vm")
+	assertNoSSHSpawned(t, logPath, "a several-row listing")
+	assertNoVMDeleted(t, fs, "a refused extract")
+}
+
+// TestExtractDeadRowsPlaceInsteadOfRefusing pins the corrected policy's
+// copy-out half: several dead rows are not the several-machine anomaly —
+// the Customer has no machine the copy could choose wrong — so the copy
+// proceeds exactly as an empty listing does: the ask places a machine,
+// the story says creating, and the stream comes out of what was placed.
+func TestExtractDeadRowsPlaceInsteadOfRefusing(t *testing.T) {
+	fs := newFakeServer(t)
+	fs.expired = []string{"vmA", "vmB"}
+	setupHome(t, fs.URL)
+	tarPath := makeTarGz(t, tarEntry{name: "out/a.txt", body: "hello", mode: 0644})
+	t.Setenv("FAKE_SSH_STDOUT", tarPath)
+	logPath := fakeSSHStreamingStdout(t)
+	var stderr bytes.Buffer
+	dest := t.TempDir()
+
+	if err := extractRun("~/out", dest, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if got := stderr.String(); !strings.Contains(got, "creating one") || strings.Contains(got, "several machines") {
+		t.Fatalf("several dead rows must be told creating, never refused as several, got %q", got)
+	}
+	asks, placed := fs.ensureCounts()
+	if asks != 1 || len(placed) != 1 || placed[0] != "vm123" {
+		t.Fatalf("the ask must place the one machine, got %d asks, placed %v", asks, placed)
+	}
+	if logged := readLog(t, logPath); !strings.Contains(logged, "user@vm123") {
+		t.Fatalf("the copy must stream out of the placed machine: %s", logged)
+	}
+	b, err := os.ReadFile(filepath.Join(dest, "out", "a.txt"))
+	if err != nil || string(b) != "hello" {
+		t.Fatalf("the copy must land what the placed machine streamed, got %q, %v", b, err)
+	}
+	assertNoVMDeleted(t, fs, "an extract past dead rows")
 }
 
 func TestExtractTarSlipRefused(t *testing.T) {
